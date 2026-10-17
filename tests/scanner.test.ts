@@ -413,6 +413,100 @@ test rust/excessive-clones "reports excessive clones" {
     expect(records(result).map((finding) => finding.observed)).toEqual([3, 3]);
   });
 
+  test("keeps the earliest owners when findings are truncated within one file", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "owners.rs");
+    await Bun.write(source, Array.from({ length: 30 }, (_, index) =>
+      `fn owner_${index}() { a.clone(); b.clone(); }\n`).join(""));
+    const result = await inspect({ paths: [source], rulePaths: [rustRulePath], maxFindings: 3 });
+    expect(result.findingCount).toBe(30);
+    expect(await Promise.all(records(result).map(ownerText))).toEqual(
+      [0, 1, 2].map((index) => `fn owner_${index}() { a.clone(); b.clone(); }`),
+    );
+  });
+
+  test("orders findings that share an owner start by owner end", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "chain.rs");
+    const rules = join(root, "chain.badbox");
+    await Bun.write(source, "fn chain() { a.b(x.clone()).c(y.clone()); }");
+    await Bun.write(rules, `#badbox 1
+rule rust/clone-arguments for rust {
+  summary "Clone calls grouped by the enclosing call"
+  find code(value) \`value.clone()\`
+  group by nearest node(call_expression)
+  when count > 0
+  report {
+    severity info
+    message "Call has clone arguments"
+    evidence "clone call sites"
+  }
+}
+`);
+    const result = await inspect({ paths: [source], rulePaths: [rules] });
+    expect(await Promise.all(records(result).map(ownerText))).toEqual([
+      "a.b(x.clone())",
+      "a.b(x.clone()).c(y.clone())",
+    ]);
+  });
+
+  test("source text that is not UTF-8 becomes a diagnostic without discarding other files", async () => {
+    const root = await temporaryRoot();
+    const encoder = new TextEncoder();
+    await Bun.write(join(root, "good.rs"), "fn good() { a.clone(); b.clone(); }");
+    await Bun.write(join(root, "latin1.rs"), new Uint8Array([
+      ...encoder.encode("// caf"), 0xe9, ...encoder.encode("\nfn bad() { a.clone(); b.clone(); }\n"),
+    ]));
+    const result = await inspect({ paths: [root], rulePaths: [rustRulePath] });
+    expect(result.checkedFiles).toBe(1);
+    expect(records(result).map((finding) => basename(finding.file))).toEqual(["good.rs"]);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(basename(result.diagnostics[0]!.file)).toBe("latin1.rs");
+    expect(result.diagnostics[0]?.message).toContain("UTF-8");
+  });
+
+  test("match inside requires an enclosing node, not the match itself", async () => {
+    const root = await temporaryRoot();
+    const rustSource = join(root, "nested.rs");
+    const goSource = join(root, "statement.go");
+    const rules = join(root, "inside.badbox");
+    await Bun.write(rustSource, "fn calls() { outer(inner(1)); alone(2); }");
+    await Bun.write(goSource, "package p\n\nfunc calls() {\n\trun()\n}\n");
+    await Bun.write(rules, `#badbox 1
+rule rust/nested-calls for rust {
+  summary "Calls nested in another call"
+  find node call_expression
+  group by nearest callable
+  where match inside any { node call_expression }
+  when count > 0
+  report {
+    severity info
+    message "Callable has nested calls"
+    evidence "nested calls"
+  }
+}
+
+rule go/statement-calls for go {
+  summary "Calls inside expression statements"
+  find node call_expression
+  group by nearest callable
+  where match inside any { node expression_statement }
+  when count > 0
+  report {
+    severity info
+    message "Callable has statement calls"
+    evidence "statement calls"
+  }
+}
+`);
+    const result = await inspect({ paths: [root], rulePaths: [rules] });
+    expect(result.diagnostics).toEqual([]);
+    expect(records(result).map((finding) => [finding.rule.id, finding.observed])).toEqual([
+      ["rust/nested-calls", 1],
+      ["go/statement-calls", 1],
+    ]);
+  });
+
   test("profiles aggregation and compact output construction separately", async () => {
     const result = await inspect({ paths: [fixtureRoot], rulePaths: [exampleRulePack], profile: true });
     expect(result.performance?.aggregationMs).toBeGreaterThanOrEqual(0);

@@ -593,10 +593,8 @@ fn user_facing_path_text(path: &str) -> String {
     path.to_owned()
 }
 
-fn user_facing_path(path: &Path) -> Result<String> {
-    path.to_str()
-        .context("source path is not valid UTF-8")
-        .map(user_facing_path_text)
+fn user_facing_path(path: &Path) -> String {
+    user_facing_path_text(&path.to_string_lossy())
 }
 
 fn parsed_file(path: &Path, source: &str, language: Language) -> Result<(Arc<ParsedFile>, bool)> {
@@ -683,13 +681,34 @@ fn scan_file(
     finder: &FinderPlan,
     settings: FileScanSettings,
 ) -> Result<FileScan> {
-    let file_name = user_facing_path(file)?;
+    let file_name = user_facing_path(file);
     let read_started = Instant::now();
-    let source = fs::read_to_string(file).with_context(|| format!("reading {file_name}"))?;
+    let source = fs::read_to_string(file);
     let read = if settings.profile {
         read_started.elapsed()
     } else {
         Duration::default()
+    };
+    let source = match source {
+        Ok(source) => source,
+        Err(error) => {
+            let message = if error.kind() == std::io::ErrorKind::InvalidData {
+                "source is not valid UTF-8; file skipped".to_owned()
+            } else {
+                format!("reading source failed: {error}; file skipped")
+            };
+            return Ok(FileScan {
+                diagnostics: vec![Diagnostic {
+                    file: file_name,
+                    message,
+                }],
+                timings: FileTimings {
+                    read,
+                    ..FileTimings::default()
+                },
+                ..FileScan::default()
+            });
+        }
     };
     let revision = ResultRevision {
         source: *blake3::hash(source.as_bytes()).as_bytes(),
@@ -847,7 +866,7 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
     let file_names = file_list
         .iter()
         .map(|path| user_facing_path(path))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let pool = scan_pool()?;
     let mut performance = PerformanceProfile {
         rule_load_ms: milliseconds(rule_load),
@@ -932,7 +951,14 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
     }
     commit_result_cache(result_cache_candidates)?;
     metadata.truncated = metadata.finding_count > findings.len();
-    findings.sort_by_key(|finding| (finding.file_id, finding.owner_start, finding.rule_id));
+    findings.sort_by_key(|finding| {
+        (
+            finding.file_id,
+            finding.owner_start,
+            finding.owner_end,
+            finding.rule_id,
+        )
+    });
     metadata
         .diagnostics
         .sort_by(|a, b| (&a.file, &a.message).cmp(&(&b.file, &b.message)));

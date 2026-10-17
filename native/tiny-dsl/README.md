@@ -119,10 +119,12 @@ find code(callee, args...) `callee(args)`
 Names declared inside `code(...)` are captures. The declaration is what makes a name a hole;
 undeclared identifiers in the backtick pattern remain literal. `name...` declares a multiple-node
 capture. Badbox lowers declared names to the backend's capture notation before compilation.
+Capture names start with a letter and contain only letters, digits, and underscores.
 
 Capture names are rule-scoped for ordering relations. Repeating a single-node capture name in the
 primary selector and a `follows` or `precedes` selector requires both occurrences to capture exactly
-the same source text. Different names remain independent.
+the same source text. Different names remain independent. Repeating a primary capture name in a
+`has`, `lacks`, or `inside` selector is rejected because those relations do not correlate captures.
 
 Use an explicit syntax-node kind when the grammar already has a precise node:
 
@@ -200,7 +202,8 @@ rule's `find code(...)` selector. `matches` uses Rust regular-expression syntax.
 The evaluator currently supports these structural combinations:
 
 - `where match inside any|all { ... }` requires the selected match to be inside the auxiliary
-  selector or selectors.
+  selector or selectors. A match is not inside itself; an enclosing node of another kind with the
+  same range still counts.
 - `where group has any|all { ... }` requires the owning group to contain matching evidence.
 - `where group lacks any|all { ... }` requires the owning group not to satisfy the corresponding
   `has` condition.

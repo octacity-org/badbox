@@ -47,6 +47,9 @@ fn count(matches: &[OwnedMatch], options: EvaluationOptions) -> Result<Evaluatio
             .or_default()
             .push(pack_range(matched.range.start, matched.range.end)?);
     }
+    // Owner order decides which findings survive max_findings, so it must not follow hash order.
+    let mut groups = groups.into_iter().collect::<Vec<_>>();
+    groups.sort_unstable_by_key(|(owner, _)| *owner);
     let mut findings = Vec::with_capacity(groups.len().min(options.max_findings));
     let mut finding_count = 0;
     let mut output_build = Duration::ZERO;

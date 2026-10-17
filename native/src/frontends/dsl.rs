@@ -187,6 +187,21 @@ fn lower_conditions(
                         .map(|selection| shared_capture_names(primary_captures, selection, rule_id))
                         .collect::<Result<Vec<_>>>()?
                 } else {
+                    for selection in selections {
+                        if let Selection::Code { captures, .. } = selection
+                            && let Some(repeated) = captures.iter().find(|capture| {
+                                primary_captures
+                                    .iter()
+                                    .any(|primary| primary.name == capture.name)
+                            })
+                        {
+                            bail!(
+                                "rule {rule_id} repeats capture {} in a relational selector; \
+                                 captures are correlated only by follows and precedes",
+                                repeated.name
+                            );
+                        }
+                    }
                     vec![Vec::new(); selections.len()]
                 };
                 Ok(Condition::Relation {
@@ -262,6 +277,14 @@ fn lower_captures(
             }
             continue;
         }
+        if character == '\''
+            && language == Language::Rust
+            && !rust_char_literal_starts(&template[start..])
+        {
+            // Lifetimes and loop labels are not quoted text.
+            output.push(character);
+            continue;
+        }
         if matches!(character, '\'' | '"') {
             quote = Some(character);
             output.push(character);
@@ -306,6 +329,16 @@ fn lower_captures(
         );
     }
     Ok(output)
+}
+
+/// `text` starts with `'`. Rust char literals are an escape or exactly one character.
+fn rust_char_literal_starts(text: &str) -> bool {
+    let mut characters = text[1..].chars();
+    match characters.next() {
+        Some('\\') => true,
+        Some(_) => characters.next() == Some('\''),
+        None => false,
+    }
 }
 
 fn callable_kinds(language: Language) -> Option<&'static [&'static str]> {
@@ -376,6 +409,64 @@ mod tests {
             lower_captures("\"value\" + value", &captures, Language::Rust).unwrap(),
             "\"value\" + $VALUE"
         );
+    }
+
+    #[test]
+    fn rust_lifetimes_do_not_hide_captures() {
+        let captures = [tiny_dsl::Capture {
+            name: "arg".to_owned(),
+            multiple: false,
+        }];
+        assert_eq!(
+            lower_captures(
+                "fn a<'a>(arg: &'a str) -> &'a str { arg }",
+                &captures,
+                Language::Rust
+            )
+            .unwrap(),
+            "fn a<'a>($ARG: &'a str) -> &'a str { $ARG }"
+        );
+        assert_eq!(
+            lower_captures("f('a', '\\'', arg)", &captures, Language::Rust).unwrap(),
+            "f('a', '\\'', $ARG)"
+        );
+        assert_eq!(
+            lower_captures("'outer: loop { f(arg) }", &captures, Language::Rust).unwrap(),
+            "'outer: loop { f($ARG) }"
+        );
+    }
+
+    #[test]
+    fn repeated_capture_names_are_rejected_outside_ordering_relations() {
+        for clause in [
+            "where group has any { code(handle) `handle.close()` }",
+            "where group lacks any { code(handle) `handle.close()` }",
+            "where match inside any { code(handle) `consume(handle)` }",
+        ] {
+            let error = compile(&format!(
+                r#"#badbox 1
+rule rust/unclosed for rust {{
+  summary "unclosed"
+  find code(handle) `handle.open()`
+  group by nearest callable
+  {clause}
+  when count > 0
+  report {{
+    severity info
+    message "handle is not closed"
+    evidence "open calls"
+  }}
+}}
+"#
+            ))
+            .expect_err("repeated capture names cannot be correlated here");
+            assert!(
+                error
+                    .to_string()
+                    .contains("correlated only by follows and precedes"),
+                "{clause}: {error}"
+            );
+        }
     }
 
     #[test]

@@ -355,6 +355,12 @@ impl Parser {
         if !self.take_symbol(TokenKind::RightParen) {
             loop {
                 let name = self.ident()?;
+                if !valid_capture_name(&name) {
+                    return Err(self.error(format!(
+                        "invalid capture {name}: capture names must start with a letter and \
+                         contain only letters, digits, and underscores"
+                    )));
+                }
                 let multiple = self.take_symbol(TokenKind::Ellipsis);
                 if captures
                     .iter()
@@ -720,6 +726,14 @@ fn valid_rule_id(id: &str) -> bool {
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     };
     matches!((parts.next(), parts.next(), parts.next()), (Some(namespace), Some(name), None) if valid_part(namespace) && valid_part(name))
+}
+
+/// Leading underscores would lower to non-capturing backend wildcards.
+fn valid_capture_name(name: &str) -> bool {
+    name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn symbol_name(kind: &TokenKind) -> &'static str {
