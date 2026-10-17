@@ -90,6 +90,7 @@ struct OrderingFact {
 
 struct CandidateMatch {
     matched: OwnedMatch,
+    kind: u16,
     sequence: Option<SequenceContext>,
     correlation_ids: Vec<Option<u32>>,
 }
@@ -697,7 +698,7 @@ impl StructuralBackend for AstGrepBackend {
                     continue;
                 };
                 if plan.needs_ranges[selector_id] {
-                    selector_ranges[selector_id].push(byte_range(&matched));
+                    selector_ranges[selector_id].push((byte_range(&matched), matched.kind_id()));
                 }
                 let ordering_started = (!plan.ordering_uses[selector_id].is_empty())
                     .then(|| profile.then(Instant::now))
@@ -749,6 +750,7 @@ impl StructuralBackend for AstGrepBackend {
                                 range: byte_range(&owner),
                             },
                         },
+                        kind: matched.kind_id(),
                         sequence: plan.rules_need_sequence[rule_index]
                             .then(|| sequence_context(matched.get_node(), rule.rule.language))
                             .flatten(),
@@ -884,7 +886,7 @@ fn relations_match(
     rule: &CompiledRule,
     candidate: &CandidateMatch,
     relation_selectors: &[Vec<usize>],
-    selector_ranges: &[Vec<ByteRange>],
+    selector_ranges: &[Vec<(ByteRange, u16)>],
     ordering_facts: &[Vec<Vec<OrderingFact>>],
     group_cache: &mut HashMap<(usize, usize, usize), bool>,
 ) -> bool {
@@ -902,6 +904,7 @@ fn relations_match(
                 RelationTarget::Match => relation_matches(
                     relation,
                     candidate.matched.range,
+                    Some(candidate.kind),
                     &relation_selectors[index],
                     selector_ranges,
                 ),
@@ -915,6 +918,7 @@ fn relations_match(
                         relation_matches(
                             relation,
                             candidate.matched.owner.range,
+                            None,
                             &relation_selectors[index],
                             selector_ranges,
                         )
@@ -962,14 +966,18 @@ fn ordering_relation_matches(
 fn relation_matches(
     relation: &CompiledRelationCondition,
     target: ByteRange,
+    target_kind: Option<u16>,
     selector_ids: &[usize],
-    selector_ranges: &[Vec<ByteRange>],
+    selector_ranges: &[Vec<(ByteRange, u16)>],
 ) -> bool {
     let selection_matches = |selector_id: &usize| {
         let ranges = &selector_ranges[*selector_id];
-        ranges.iter().any(|range| match relation.target {
-            RelationTarget::Match => contains(*range, target),
-            RelationTarget::Group => contains(target, *range),
+        ranges.iter().any(|&(range, kind)| match relation.target {
+            // A match is not inside itself. A wrapper of another kind with the same range is.
+            RelationTarget::Match => {
+                contains(range, target) && !(same_range(range, target) && Some(kind) == target_kind)
+            }
+            RelationTarget::Group => contains(target, range),
         })
     };
     let matched = if relation.require_all {

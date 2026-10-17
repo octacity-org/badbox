@@ -319,7 +319,8 @@ output remains deterministic.
   statements.
 - Ordering by nearest callable currently targets Rust, Go, PowerShell, and Zig.
 - Only strict greater-than count aggregation is implemented.
-- Syntax-error files produce diagnostics and no partial findings.
+- Syntax-error files and source files that are not UTF-8 produce diagnostics and no partial
+  findings.
 - Caches do not survive a CLI process and still read file contents for validation.
 - Findings are bounded to 10,000 records by default. Increasing `maxFindings` adds 20 bytes per
   returned finding.

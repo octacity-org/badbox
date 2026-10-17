@@ -170,3 +170,31 @@ rule NoNamespace for rust {}
     .expect_err("ID is rejected");
     assert!(invalid.to_string().contains("lowercase namespace/name"));
 }
+
+#[test]
+fn rejects_capture_names_that_cannot_be_backend_captures() {
+    for name in ["_value", "my-value", "a/b"] {
+        let error = parse(&format!(
+            r#"#badbox 1
+rule rust/captures for rust {{
+  summary "captures"
+  find code({name}) `{name}.clone()`
+  group by nearest callable
+  when count > 0
+  report {{
+    severity info
+    message "captures"
+    evidence "captures"
+  }}
+}}
+"#
+        ))
+        .expect_err("capture name is rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("capture names must start with a letter"),
+            "{name}: {error}"
+        );
+    }
+}
