@@ -108,3 +108,13 @@ impl Threshold {
 pub struct Evidence {
     pub subject: String,
 }
+
+/// A DSL fixture expectation for a rule declared in the same file.
+#[derive(Debug)]
+pub struct RuleTest {
+    pub rule_id: String,
+    pub name: String,
+    pub input: String,
+    pub findings: u32,
+    pub count: Option<u32>,
+}

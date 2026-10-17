@@ -21,6 +21,8 @@ rewriting or LLM reasoning to the native engine.
 - Project rules live under `.badbox/`. No policies or example rules run by default.
 - `badbox create <name.badbox>` creates `.badbox/<name.badbox>` with the current `#badbox 1`
   header and an editable example. It must not overwrite an existing file.
+- `badbox test` runs DSL `test` fixtures from `.badbox/` against their own rule. Failed tests,
+  invalid rules, and an empty test set produce a nonzero exit. `count` requires `findings 1`.
 - Findings do not make the CLI fail. Invalid rules, invalid input, I/O errors, or syntax diagnostics
   make the check incomplete and produce a nonzero exit.
 - DSL is the primary authoring format. YAML is a compatibility frontend. Both compile to the same
@@ -70,7 +72,7 @@ this split when extending execution; do not reintroduce per-rule tree scans.
 
 ## Important Paths
 
-- `src/cli.ts` — `check` and `create` commands.
+- `src/cli.ts` — `check`, `test`, and `create` commands.
 - `src/scanner/index.ts` — public `inspect()` wrapper and compact finding iterator.
 - `src/scanner/native.ts` — development addon and platform-package loading.
 - `src/scanner/types.ts` — public result and profiling types.

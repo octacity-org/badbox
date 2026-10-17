@@ -3,8 +3,8 @@
 use crate::{
     model::{Language, Severity},
     rule_ir::{
-        Aggregation, Condition, Evidence, ParameterValue, Relation, RelationTarget, Rule, Scope,
-        StructuralSelection, TextOperator, Threshold,
+        Aggregation, Condition, Evidence, ParameterValue, Relation, RelationTarget, Rule, RuleTest,
+        Scope, StructuralSelection, TextOperator, Threshold,
     },
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -13,6 +13,29 @@ use tiny_dsl::{ComparisonValue, Group, Selection, WhereClause};
 pub fn compile(source: &str) -> Result<Vec<Rule>> {
     let document = tiny_dsl::parse(source)?;
     document.rules.into_iter().map(lower_rule).collect()
+}
+
+/// Lower fixture tests. `check` ignores them; only the rule test runner executes them.
+pub fn tests(source: &str) -> Result<Vec<RuleTest>> {
+    let tiny_dsl::Document { rules, tests, .. } = tiny_dsl::parse(source)?;
+    tests
+        .into_iter()
+        .map(|test| {
+            ensure!(
+                rules.iter().any(|rule| rule.id == test.rule_id),
+                "test {:?} names rule {}, which is not declared in the same file",
+                test.name,
+                test.rule_id
+            );
+            Ok(RuleTest {
+                rule_id: test.rule_id,
+                name: test.name,
+                input: test.input,
+                findings: test.expect.findings,
+                count: test.expect.count,
+            })
+        })
+        .collect()
 }
 
 fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {

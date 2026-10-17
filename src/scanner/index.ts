@@ -1,11 +1,12 @@
 export { detectProject } from "./detect.ts";
 
 import { findingRecord, findingRecordWidth } from "./types.ts";
-import type { CheckResult, FindingRecord, InspectOptions } from "./types.ts";
+import type { CheckResult, FindingRecord, InspectOptions, RuleTestOptions, RuleTestResult } from "./types.ts";
 import { loadNativeEngine } from "./native.ts";
 
 export type {
   CheckLanguage, CheckResult, CheckSeverity, FindingRecord, InspectOptions, PerformanceProfile, RuleMetadata,
+  RuleTestCounts, RuleTestOptions, RuleTestResult,
 } from "./types.ts";
 export { findingRecord, findingRecordWidth };
 
@@ -45,6 +46,13 @@ export async function inspect(options: InspectOptions): Promise<CheckResult> {
     (result.performance as { jsDecodeMs: number }).jsDecodeMs = decodeMs;
   }
   return result;
+}
+
+/** Run the fixture tests declared in DSL rule files. Invalid rule files reject the whole run. */
+export async function testRules(options: RuleTestOptions): Promise<RuleTestResult[]> {
+  if (!options.rulePaths.length) throw new TypeError("rulePaths must not be empty");
+  const native = loadNativeEngine();
+  return JSON.parse(await native.testRules(JSON.stringify({ rulePaths: options.rulePaths }))) as RuleTestResult[];
 }
 
 /** Iterate compact findings without materializing a second result array. */

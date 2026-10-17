@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 
-import { inspect } from "./scanner/index.ts";
+import { inspect, testRules } from "./scanner/index.ts";
+import type { RuleTestResult } from "./scanner/index.ts";
 import { reportCheck } from "./reporters/terminal.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-const usage = "Usage: badbox check [path ...]\n       badbox create <name.badbox>";
+const usage = "Usage: badbox check [path ...]\n       badbox test\n       badbox create <name.badbox>";
 const ruleTemplate = `#badbox 1
 
 # Replace or remove this example rule.
@@ -38,6 +39,25 @@ if (command === "check" && !args.some((argument) => argument.startsWith("-"))) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
+} else if (command === "test" && args.length === 0) {
+  try {
+    const results = await testRules({ rulePaths: [join(process.cwd(), ".badbox")] });
+    if (!results.length) {
+      console.error("Found no rule tests in .badbox");
+      process.exitCode = 1;
+    } else {
+      for (const result of results) {
+        const label = `${result.ruleId} ${JSON.stringify(result.name)}`;
+        console.log(result.passed ? `PASS ${label}` : `FAIL ${label}: ${failureReason(result)}`);
+      }
+      const failed = results.filter((result) => !result.passed).length;
+      console.log(`${results.length} tests, ${failed} failed`);
+      if (failed) process.exitCode = 1;
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 } else if (command === "create" && args.length === 1) {
   const [name] = args;
   const segments = name!.split(/[\\/]/);
@@ -62,4 +82,13 @@ if (command === "check" && !args.some((argument) => argument.startsWith("-"))) {
 } else {
   console.error(usage);
   process.exitCode = 1;
+}
+
+function failureReason(result: RuleTestResult): string {
+  const { expected, actual } = result;
+  if (!actual) return result.error ?? "fixture was not checked";
+  if (actual.findings !== expected.findings) {
+    return `expected ${expected.findings} findings, got ${actual.findings}`;
+  }
+  return `expected count ${expected.count}, got ${actual.count}`;
 }

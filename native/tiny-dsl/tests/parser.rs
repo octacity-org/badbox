@@ -198,3 +198,20 @@ rule rust/captures for rust {{
         );
     }
 }
+
+#[test]
+fn count_expectations_require_exactly_one_finding() {
+    let error = parse(
+        r#"#badbox 1
+test rust/excessive-clones "two findings with a count" {
+  input "fixtures/excessive.rs"
+  expect {
+    findings 2
+    count 5
+  }
+}
+"#,
+    )
+    .expect_err("count is ambiguous with more than one finding");
+    assert!(error.to_string().contains("count requires findings 1"));
+}

@@ -131,3 +131,54 @@ test("create refuses to overwrite an existing rule file", async () => {
   expect(stderr).toContain("already exists");
   expect(await Bun.file(path).text()).toBe("keep me");
 });
+
+async function runCli(project: string, ...args: string[]) {
+  const proc = Bun.spawn([process.execPath, cli, ...args], {
+    cwd: project, stdout: "pipe", stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+  ]);
+  return { stdout, stderr, code };
+}
+
+test("test runs rule fixtures declared under .badbox and fails on mismatches", async () => {
+  const project = await projectWithRules();
+  await mkdir(join(project, ".badbox", "fixtures"));
+  await Bun.write(join(project, ".badbox", "fixtures", "clones.rs"), "fn f() { a.clone(); b.clone(); }");
+  const rulePath = join(project, ".badbox", "clones.badbox");
+  const rules = await Bun.file(rulePath).text();
+  await Bun.write(rulePath, `${rules}
+test rust/excessive-clones "reports clones" {
+  input "fixtures/clones.rs"
+  expect {
+    findings 1
+    count 2
+  }
+}
+`);
+
+  const passing = await runCli(project, "test");
+  expect(passing.code).toBe(0);
+  expect(passing.stderr).toBe("");
+  expect(passing.stdout).toContain('PASS rust/excessive-clones "reports clones"');
+  expect(passing.stdout).toContain("1 tests, 0 failed");
+
+  await Bun.write(rulePath, `${await Bun.file(rulePath).text()}
+test rust/excessive-clones "expects nothing" {
+  input "fixtures/clones.rs"
+  expect findings 0
+}
+`);
+  const failing = await runCli(project, "test");
+  expect(failing.code).toBe(1);
+  expect(failing.stdout).toContain('FAIL rust/excessive-clones "expects nothing": expected 0 findings, got 1');
+  expect(failing.stdout).toContain("2 tests, 1 failed");
+});
+
+test("test fails when the project declares no rule tests", async () => {
+  const project = await projectWithRules();
+  const result = await runCli(project, "test");
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("no rule tests");
+});

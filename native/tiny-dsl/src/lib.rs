@@ -538,10 +538,11 @@ impl Parser {
                     _ => return Err(self.error(format!("unknown expectation field {field}"))),
                 }
             }
-            TestExpectation {
-                findings: required(findings, "findings", self)?,
-                count,
+            let findings = required(findings, "findings", self)?;
+            if count.is_some() && findings != 1 {
+                return Err(self.error("count requires findings 1"));
             }
+            TestExpectation { findings, count }
         } else {
             self.keyword("findings")?;
             TestExpectation {

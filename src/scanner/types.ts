@@ -112,3 +112,25 @@ export interface FindingRecord {
   readonly ownerEnd: number;
   readonly observed: number;
 }
+
+export interface RuleTestOptions {
+  readonly rulePaths: readonly string[];
+}
+
+/** Finding count and, for exactly one finding, its observed count. */
+export interface RuleTestCounts {
+  readonly findings: number;
+  readonly count?: number;
+}
+
+export interface RuleTestResult {
+  readonly ruleFile: string;
+  readonly ruleId: string;
+  readonly name: string;
+  readonly input: string;
+  readonly passed: boolean;
+  readonly expected: RuleTestCounts;
+  /** Absent when the fixture could not be checked; error explains why. */
+  readonly actual?: RuleTestCounts;
+  readonly error?: string;
+}

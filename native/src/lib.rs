@@ -9,7 +9,8 @@ use backend::{StructuralBackend, ast_grep::AstGrepBackend};
 use ignore::WalkBuilder;
 use model::{
     CompactFinding, Diagnostic, FINDING_RECORD_WIDTH, Language, PerformanceProfile, RuleMetadata,
-    ScalarParameter, ScanMetadata, ScanOptions, ScanOutput,
+    RuleTestOptions, RuleTestResult, ScalarParameter, ScanMetadata, ScanOptions, ScanOutput,
+    TestCounts,
 };
 use napi::{
     Env, Task,
@@ -973,6 +974,118 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
         metadata,
         findings: records,
     })
+}
+
+/// Run every DSL test declared next to its rule, one fixture at a time.
+fn run_rule_tests(options: RuleTestOptions) -> Result<Vec<RuleTestResult>> {
+    let mut results = Vec::new();
+    for rule_file in expand_rule_paths(&options.rule_paths)? {
+        if rule_file.extension().and_then(|value| value.to_str()) != Some("badbox") {
+            continue;
+        }
+        // Invalid rules abort the run, as they do for check.
+        cached_rules(&rule_file)?;
+        let source = fs::read_to_string(&rule_file)
+            .with_context(|| format!("rule {}", rule_file.display()))?;
+        let tests = frontends::dsl::tests(&source)
+            .with_context(|| format!("rule {}", rule_file.display()))?;
+        let directory = rule_file.parent().unwrap_or(Path::new(""));
+        for test in tests {
+            let input = directory.join(&test.input);
+            let expected = TestCounts {
+                findings: test.findings,
+                count: test.count,
+            };
+            let (actual, error) = match fixture_counts(&rule_file, &input, &test.rule_id) {
+                Ok(actual) => (Some(actual), None),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            };
+            let passed = actual.as_ref().is_some_and(|actual| {
+                actual.findings == expected.findings
+                    && (expected.count.is_none() || actual.count == expected.count)
+            });
+            results.push(RuleTestResult {
+                rule_file: user_facing_path(&rule_file),
+                rule_id: test.rule_id,
+                name: test.name,
+                input: user_facing_path(&input),
+                passed,
+                expected,
+                actual,
+                error,
+            });
+        }
+    }
+    Ok(results)
+}
+
+fn fixture_counts(rule_file: &Path, input: &Path, rule_id: &str) -> Result<TestCounts> {
+    let input_name = user_facing_path(input);
+    ensure!(input.is_file(), "fixture {input_name} does not exist");
+    let output = scan(ScanOptions {
+        paths: vec![input.to_string_lossy().into_owned()],
+        rule_paths: vec![rule_file.to_string_lossy().into_owned()],
+        parameters: BTreeMap::new(),
+        threshold: None,
+        profile: false,
+        max_findings: u32::MAX,
+    })?;
+    let rule_index = output
+        .metadata
+        .rules
+        .iter()
+        .position(|rule| rule.id == rule_id)
+        .with_context(|| format!("rule {rule_id} was not loaded"))?;
+    let language = output.metadata.rules[rule_index].language;
+    ensure!(
+        Language::for_path(input) == Some(language),
+        "fixture {input_name} is not a {} source file",
+        format!("{language:?}").to_lowercase()
+    );
+    if let Some(diagnostic) = output.metadata.diagnostics.first() {
+        bail!("fixture {input_name}: {}", diagnostic.message);
+    }
+    let observed = output
+        .findings
+        .as_chunks::<{ FINDING_RECORD_WIDTH as usize }>()
+        .0
+        .iter()
+        .filter(|record| record[1] as usize == rule_index)
+        .map(|record| record[4])
+        .collect::<Vec<_>>();
+    Ok(TestCounts {
+        findings: u32::try_from(observed.len()).context("finding count exceeds u32")?,
+        count: match observed.as_slice() {
+            [observed] => Some(*observed),
+            _ => None,
+        },
+    })
+}
+
+pub struct TestRulesTask(String);
+
+impl Task for TestRulesTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let run = || -> Result<String> {
+            let options: RuleTestOptions =
+                serde_json::from_str(&self.0).context("invalid rule test options")?;
+            Ok(serde_json::to_string(&run_rule_tests(options)?)?)
+        };
+        run().map_err(|error| napi::Error::from_reason(format!("{error:#}")))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+/// Run DSL rule tests on native workers and return JSON results.
+#[napi]
+pub fn test_rules(request: String) -> AsyncTask<TestRulesTask> {
+    AsyncTask::new(TestRulesTask(request))
 }
 
 pub struct InspectTask(String);
