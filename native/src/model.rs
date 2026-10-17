@@ -138,6 +138,34 @@ pub struct ScanOptions {
     pub max_findings: u32,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuleTestOptions {
+    pub rule_paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct TestCounts {
+    pub findings: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleTestResult {
+    pub rule_file: String,
+    pub rule_id: String,
+    pub name: String,
+    pub input: String,
+    pub passed: bool,
+    pub expected: TestCounts,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<TestCounts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ScalarParameter {

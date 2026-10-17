@@ -223,6 +223,7 @@ dependency, build-configuration, or semantic type detection.
 ```text
 badbox create <name.badbox>
 badbox check [path ...]
+badbox test
 ```
 
 ### `create`
@@ -239,6 +240,25 @@ discovery but do not change where rules are loaded from.
 
 Discovery respects ignore files and hidden paths, skips common build and vendor directories, and
 does not follow nested symlinks.
+
+### `test`
+
+Runs the `test` declarations in `.badbox` DSL rule files. Each test checks one fixture file against
+its rule and compares the number of findings, and optionally the observed count of a single finding:
+
+```text
+test rust/excessive-clones "reports excessive clones" {
+  input "fixtures/excessive.rs"
+  expect {
+    findings 1
+    count 5
+  }
+}
+```
+
+`input` is relative to the rule file. Fixtures under `.badbox/` are hidden from `check`. The command
+prints `PASS` or `FAIL` per test and exits nonzero when any test fails, when a rule file is invalid,
+or when no tests are declared.
 
 ## Programmatic API
 
@@ -269,6 +289,9 @@ if (result.diagnostics.length > 0) {
   console.error(result.diagnostics);
 }
 ```
+
+`testRules({ rulePaths })` runs DSL rule tests and returns one result per test with `passed`,
+`expected`, and `actual` counts, or an `error` when the fixture could not be checked.
 
 `inspect()` also accepts:
 

@@ -242,8 +242,13 @@ test rust/excessive-clones "reports excessive clones" {
 }
 ```
 
-`findings` is required. `count` optionally checks the observed count of the expected finding.
-Badbox parses these declarations today; a dedicated rule-test runner is not part of the current CLI.
+`findings` is required. `count` checks the observed count of the single expected finding, so it is
+allowed only with `findings 1`. A test must name a rule declared in the same file. `input` is
+relative to the rule file.
+
+`badbox test` checks each fixture against only its own rule file and the named rule. A test fails
+when the counts differ, or when the fixture is missing, has syntax errors, or is not a source file
+of the rule's language.
 
 ## Comments and literals
 
@@ -266,7 +271,7 @@ buffer.
 
 ## Current boundaries
 
-- The crate parses rules and fixtures; it does not read files or execute tests.
+- The crate parses rules and tests; it does not read files or execute tests. Badbox runs them.
 - Badbox executes `find -> where -> group -> count -> threshold -> report`, including text
   predicates, `match inside`, `group has/lacks`, and `match follows/precedes`.
 - Statement ordering executes for Rust, Go, PowerShell, and Zig callable groups. Immediate ordering

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 
 export interface NativeEngine {
   inspect(request: string): Promise<{ metadata: string; findings: Uint32Array }>;
+  testRules(request: string): Promise<string>;
 }
 
 export const supportedNativePackages = [
