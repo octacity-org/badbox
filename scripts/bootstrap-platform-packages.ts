@@ -42,7 +42,7 @@ export async function prepareBootstrapPackages(options: PrepareBootstrapPackages
       writeFile(join(packageDirectory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`),
       writeFile(
         join(packageDirectory, "README.md"),
-        `# ${platform.name}\n\nNamespace reservation for the native ${platform.os}/${platform.cpu} engine used by [Badbox](https://github.com/0ctacity/badbox). Version 0.0.0 contains no native binary.\n`,
+        `# ${platform.name}\n\nNamespace reservation for the native ${platform.os}/${platform.cpu} engine used by [Badbox](https://github.com/octacity-org/badbox). Version 0.0.0 contains no native binary.\n`,
       ),
       writeFile(
         join(packageDirectory, "index.cjs"),

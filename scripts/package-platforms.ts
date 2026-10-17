@@ -63,7 +63,7 @@ export async function preparePlatformPackages(options: PreparePlatformPackagesOp
       writeFile(join(packageDirectory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`),
       writeFile(
         join(packageDirectory, "README.md"),
-        `# ${platform.name}\n\nNative ${platform.os}/${platform.cpu} engine for [Badbox](https://github.com/0ctacity/badbox).\n`,
+        `# ${platform.name}\n\nNative ${platform.os}/${platform.cpu} engine for [Badbox](https://github.com/octacity-org/badbox).\n`,
       ),
       writeFile(join(packageDirectory, "LICENSE"), license),
       copyFile(artifact, join(packageDirectory, "badbox.node")),

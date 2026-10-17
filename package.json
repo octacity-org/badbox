@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0ctacity/badbox.git"
+    "url": "git+https://github.com/octacity-org/badbox.git"
   },
   "type": "module",
   "module": "./src/rules/index.ts",
