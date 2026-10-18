@@ -1,6 +1,6 @@
 use tiny_dsl::{
     Aggregate, Capture, ComparisonValue, Group, Relation, RelationTarget, Selection, Severity,
-    TextOperator, WhereClause, parse,
+    TextOperator, TextValue, WhereClause, parse,
 };
 
 #[test]
@@ -75,6 +75,7 @@ test rust/excessive-clones "accepts limited clones" {
                 multiple: false,
             }],
             template: "value.clone()".into(),
+            selector: None,
         }
     );
     assert_eq!(rust.group, Group::Callable);
@@ -130,7 +131,10 @@ rule rust/checked-calls for rust {
         WhereClause::Text {
             capture: "method".into(),
             operator: TextOperator::In,
-            values: vec!["unwrap".into(), "expect".into()],
+            values: vec![
+                TextValue::String("unwrap".into()),
+                TextValue::String("expect".into()),
+            ],
         }
     );
     assert_eq!(
@@ -146,6 +150,7 @@ rule rust/checked-calls for rust {
                         multiple: false,
                     }],
                     template: "ctx.cancel()".into(),
+                    selector: None,
                 },
                 Selection::Node("select_expression".into()),
             ],
@@ -214,4 +219,101 @@ test rust/excessive-clones "two findings with a count" {
     )
     .expect_err("count is ambiguous with more than one finding");
     assert!(error.to_string().contains("count requires findings 1"));
+}
+
+fn rule_with(body: &str) -> String {
+    format!(
+        r#"#badbox 1
+rule rust/probe for rust {{
+  summary "probe"
+{body}
+  group by nearest callable
+  when count > 0
+  report {{
+    severity info
+    message "probe"
+    evidence "probe"
+  }}
+}}
+"#
+    )
+}
+
+#[test]
+fn parses_negated_match_containment() {
+    let document = parse(&rule_with(
+        "  find code(value) `value.unwrap()`\n  where match not inside any { node loop_expression }",
+    ))
+    .expect("document parses");
+    assert_eq!(
+        document.rules[0].where_clauses[0],
+        WhereClause::Relation {
+            target: RelationTarget::Match,
+            relation: Relation::NotInside,
+            require_all: false,
+            selections: vec![Selection::Node("loop_expression".into())],
+        }
+    );
+
+    let error = parse(&rule_with(
+        "  find node call_expression\n  where group not has any { node loop_expression }",
+    ))
+    .expect_err("only inside can be negated");
+    assert!(error.to_string().contains("expected inside after not"), "{error}");
+}
+
+#[test]
+fn text_conditions_read_string_parameters() {
+    let document = parse(&rule_with(
+        "  param method = \"clone\"\n  find code(value, name) `value.name()`\n  where text(name) in [\"unwrap\", method]",
+    ))
+    .expect("document parses");
+    assert_eq!(
+        document.rules[0].where_clauses[0],
+        WhereClause::Text {
+            capture: "name".into(),
+            operator: TextOperator::In,
+            values: vec![
+                TextValue::String("unwrap".into()),
+                TextValue::Parameter("method".into()),
+            ],
+        }
+    );
+
+    for (body, message) in [
+        (
+            "  find code(value, name) `value.name()`\n  where text(name) == missing",
+            "unknown parameter missing",
+        ),
+        (
+            "  param limit = 2\n  find code(value, name) `value.name()`\n  where text(name) == limit",
+            "text parameter limit must be a string",
+        ),
+        (
+            "  param enabled = true\n  find code(value, name) `value.name()`\n  where text(name) matches enabled",
+            "text parameter enabled must be a string",
+        ),
+    ] {
+        let error = parse(&rule_with(body)).expect_err("parameter reference is rejected");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
+fn code_patterns_can_select_a_node_from_their_context() {
+    let document = parse(&rule_with(
+        "  find code(pointer) `void f() { free(pointer); }` select call_expression",
+    ))
+    .expect("document parses");
+    assert_eq!(
+        document.rules[0].selection,
+        Selection::Code {
+            captures: vec![Capture {
+                name: "pointer".into(),
+                multiple: false,
+            }],
+            template: "void f() { free(pointer); }".into(),
+            selector: Some("call_expression".into()),
+        }
+    );
 }

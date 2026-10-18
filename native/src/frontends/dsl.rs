@@ -4,7 +4,7 @@ use crate::{
     model::{Language, Severity},
     rule_ir::{
         Aggregation, Condition, Evidence, ParameterValue, Relation, RelationTarget, Rule, RuleTest,
-        Scope, StructuralSelection, TextOperator, Threshold,
+        Scope, StructuralSelection, TextOperator, TextValue, Threshold,
     },
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -124,9 +124,19 @@ fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {
 fn lower_selection(selection: &Selection, language: Language) -> Result<StructuralSelection> {
     Ok(match selection {
         Selection::Node(kind) => StructuralSelection::Kind(kind.clone()),
-        Selection::Code { captures, template } => {
-            StructuralSelection::Pattern(lower_captures(template, captures, language)?)
-        }
+        Selection::Code {
+            captures,
+            template,
+            selector: None,
+        } => StructuralSelection::Pattern(lower_captures(template, captures, language)?),
+        Selection::Code {
+            captures,
+            template,
+            selector: Some(selector),
+        } => StructuralSelection::Contextual {
+            context: lower_captures(template, captures, language)?,
+            selector: selector.clone(),
+        },
     })
 }
 
@@ -171,7 +181,15 @@ fn lower_conditions(
                         tiny_dsl::TextOperator::NotIn => TextOperator::NotIn,
                         tiny_dsl::TextOperator::Matches => TextOperator::Matches,
                     },
-                    values: values.clone(),
+                    values: values
+                        .iter()
+                        .map(|value| match value {
+                            tiny_dsl::TextValue::String(value) => TextValue::Literal(value.clone()),
+                            tiny_dsl::TextValue::Parameter(name) => {
+                                TextValue::Parameter(name.clone())
+                            }
+                        })
+                        .collect(),
                 })
             }
             WhereClause::Relation {
@@ -188,18 +206,20 @@ fn lower_conditions(
                     tiny_dsl::Relation::Has => Relation::Has,
                     tiny_dsl::Relation::Lacks => Relation::Lacks,
                     tiny_dsl::Relation::Inside => Relation::Inside,
+                    tiny_dsl::Relation::NotInside => Relation::NotInside,
                     tiny_dsl::Relation::Follows => Relation::Follows,
                     tiny_dsl::Relation::Precedes => Relation::Precedes,
                 };
                 ensure!(
                     matches!(
                         (target, relation),
-                        (RelationTarget::Match, Relation::Inside)
-                            | (
-                                RelationTarget::Match,
-                                Relation::Follows | Relation::Precedes
-                            )
-                            | (RelationTarget::Group, Relation::Has | Relation::Lacks)
+                        (
+                            RelationTarget::Match,
+                            Relation::Inside | Relation::NotInside
+                        ) | (
+                            RelationTarget::Match,
+                            Relation::Follows | Relation::Precedes
+                        ) | (RelationTarget::Group, Relation::Has | Relation::Lacks)
                     ),
                     "rule {rule_id} uses a relational condition that does not execute yet"
                 );
@@ -465,6 +485,7 @@ mod tests {
             "where group has any { code(handle) `handle.close()` }",
             "where group lacks any { code(handle) `handle.close()` }",
             "where match inside any { code(handle) `consume(handle)` }",
+            "where match not inside any { code(handle) `consume(handle)` }",
         ] {
             let error = compile(&format!(
                 r#"#badbox 1
@@ -490,6 +511,71 @@ rule rust/unclosed for rust {{
                 "{clause}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn negated_containment_applies_only_to_matches() {
+        let rule = |clause: &str| {
+            format!(
+                r#"#badbox 1
+rule rust/outside for rust {{
+  summary "outside"
+  find code(value) `value.unwrap()`
+  group by nearest callable
+  {clause}
+  when count > 0
+  report {{
+    severity info
+    message "outside"
+    evidence "unwrap calls"
+  }}
+}}
+"#
+            )
+        };
+        let rules = compile(&rule("where match not inside any { node loop_expression }"))
+            .expect("match not inside lowers");
+        assert!(matches!(
+            rules[0].conditions[0],
+            Condition::Relation {
+                target: RelationTarget::Match,
+                relation: Relation::NotInside,
+                ..
+            }
+        ));
+        let error = compile(&rule("where group not inside any { node loop_expression }"))
+            .expect_err("group containment is not executable");
+        assert!(
+            error.to_string().contains("does not execute yet"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn selected_code_lowers_to_a_contextual_pattern() {
+        let rules = compile(
+            r#"#badbox 1
+rule c/free-calls for c {
+  summary "free calls"
+  find code(pointer) `void f() { free(pointer); }` select call_expression
+  group by nearest node(function_definition)
+  when count > 0
+  report {
+    severity info
+    message "free calls"
+    evidence "free calls"
+  }
+}
+"#,
+        )
+        .expect("contextual pattern lowers");
+        assert_eq!(
+            rules[0].selection,
+            StructuralSelection::Contextual {
+                context: "void f() { free($POINTER); }".to_owned(),
+                selector: "call_expression".to_owned(),
+            }
+        );
     }
 
     #[test]

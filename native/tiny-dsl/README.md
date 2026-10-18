@@ -93,6 +93,17 @@ when count > 4
 when count > limit
 ```
 
+Text conditions accept string parameters wherever they accept a string literal:
+
+```text
+param method = "clone"
+where text(name) == method
+where text(name) in ["unwrap", method]
+```
+
+Integer and boolean parameters cannot be used in text conditions. Boolean parameters are accepted
+and overridable but no condition reads them yet.
+
 Callers override a parameter with its qualified key:
 
 ```ts
@@ -124,13 +135,24 @@ Capture names start with a letter and contain only letters, digits, and undersco
 Capture names are rule-scoped for ordering relations. Repeating a single-node capture name in the
 primary selector and a `follows` or `precedes` selector requires both occurrences to capture exactly
 the same source text. Different names remain independent. Repeating a primary capture name in a
-`has`, `lacks`, or `inside` selector is rejected because those relations do not correlate captures.
+`has`, `lacks`, `inside`, or `not inside` selector is rejected because those relations do not correlate captures.
 
 Use an explicit syntax-node kind when the grammar already has a precise node:
 
 ```text
 find node go_statement
 ```
+
+Some code parses differently on its own than in a real file. In C, `free(pointer);` alone is a
+declaration, so `` code(pointer) `free(pointer)` `` matches no calls. Write the code inside a
+context where it parses as intended and select the node kind to match:
+
+```text
+find code(pointer) `void f() { free(pointer); }` select call_expression
+```
+
+The pattern is the first `call_expression` in the context, in depth-first order; the rest of the
+context only shapes parsing. A context without a node of the selected kind is an error. `select` works wherever `code(...)` does, including relational selectors.
 
 ### Ownership
 
@@ -204,6 +226,9 @@ The evaluator currently supports these structural combinations:
 - `where match inside any|all { ... }` requires the selected match to be inside the auxiliary
   selector or selectors. A match is not inside itself; an enclosing node of another kind with the
   same range still counts.
+- `where match not inside any|all { ... }` requires the match not to satisfy the corresponding
+  `inside` condition. `not inside any` means inside none of the selectors; `not inside all` means
+  outside at least one of them.
 - `where group has any|all { ... }` requires the owning group to contain matching evidence.
 - `where group lacks any|all { ... }` requires the owning group not to satisfy the corresponding
   `has` condition.
@@ -273,7 +298,7 @@ buffer.
 
 - The crate parses rules and tests; it does not read files or execute tests. Badbox runs them.
 - Badbox executes `find -> where -> group -> count -> threshold -> report`, including text
-  predicates, `match inside`, `group has/lacks`, and `match follows/precedes`.
+  predicates, `match inside`, `match not inside`, `group has/lacks`, and `match follows/precedes`.
 - Statement ordering executes for Rust, Go, PowerShell, and Zig callable groups. Immediate ordering
   and unsupported target/relation combinations are rejected by the scanner.
 - `callable` has semantic mappings for Rust, Go, PowerShell, and Zig. Other languages use explicit
