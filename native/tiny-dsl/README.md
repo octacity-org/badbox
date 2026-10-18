@@ -48,7 +48,7 @@ test rust/excessive-clones "accepts limited clones" {
 ```
 
 One file may contain multiple `rule` and `test` blocks. A directory passed as a Badbox rule path
-is a pack: Badbox recursively loads its `.badbox`, `.yaml`, and `.yml` files in deterministic path
+is a pack: Badbox recursively loads its `.badbox` files in deterministic path
 order. Rule IDs must remain unique across the complete check.
 
 ## File version
@@ -279,4 +279,4 @@ buffer.
 - `callable` has semantic mappings for Rust, Go, PowerShell, and Zig. Other languages use explicit
   `node(...)` ownership for now.
 - PowerShell code patterns support single-node declared captures; multiple captures are rejected.
-- YAML remains an optional Badbox frontend and compiles to the same Rule IR.
+- The DSL is Badbox's only rule format. A `.yaml` rule file passed directly is rejected; rule packs load only `.badbox` files.

@@ -319,7 +319,6 @@ fn cached_rules(path: &Path) -> Result<(Vec<Arc<CompiledRule>>, Fingerprint, boo
     let extension = canonical.extension().and_then(|value| value.to_str());
     let rules = match extension {
         Some("badbox") => frontends::dsl::compile(&source),
-        Some("yaml" | "yml") => frontends::yaml::compile(&source).map(|rule| vec![rule]),
         _ => bail!("unsupported rule file {}", canonical.display()),
     }
     .with_context(|| format!("rule {}", path.display()))?
@@ -395,10 +394,7 @@ fn expand_rule_paths(paths: &[String]) -> Result<Vec<PathBuf>> {
             if !entry.file_type().is_some_and(|kind| kind.is_file()) {
                 continue;
             }
-            if matches!(
-                entry.path().extension().and_then(|value| value.to_str()),
-                Some("badbox" | "yaml" | "yml")
-            ) {
+            if entry.path().extension().and_then(|value| value.to_str()) == Some("badbox") {
                 pack_files.insert(entry.into_path());
             }
         }

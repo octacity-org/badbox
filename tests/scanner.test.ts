@@ -7,12 +7,12 @@ import { inspect, iterateFindings, type CheckResult, type FindingRecord } from "
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures/counts", import.meta.url));
 const exampleRulePack = fileURLToPath(new URL("../examples/rules", import.meta.url));
-const rustRulePath = fileURLToPath(new URL("../examples/yaml/rust/excessive-clones.yaml", import.meta.url));
-const goRulePath = fileURLToPath(new URL("../examples/yaml/go/excessive-goroutines.yaml", import.meta.url));
+const rustRulePath = fileURLToPath(new URL("../examples/rules/rust/excessive-clones.badbox", import.meta.url));
+const goRulePath = fileURLToPath(new URL("../examples/rules/go/excessive-goroutines.badbox", import.meta.url));
 const powershellRulePath = fileURLToPath(new URL(
-  "../examples/yaml/powershell/excessive-invoke-expression.yaml", import.meta.url,
+  "../examples/rules/powershell/excessive-invoke-expression.badbox", import.meta.url,
 ));
-const zigRulePath = fileURLToPath(new URL("../examples/yaml/zig/excessive-as-casts.yaml", import.meta.url));
+const zigRulePath = fileURLToPath(new URL("../examples/rules/zig/excessive-as-casts.badbox", import.meta.url));
 const temporaryRoots: string[] = [];
 
 const records = (result: CheckResult) => [...iterateFindings(result)];
@@ -131,30 +131,27 @@ test rust/excessive-clones "reports excessive clones" {
   test("a built-in ast-grep language outside the original Rust and Go pair scans end to end", async () => {
     const root = await temporaryRoot();
     const source = join(root, "input.py");
-    const rule = join(root, "python.yaml");
+    const rule = join(root, "python.badbox");
     await Bun.write(source, [
       "def example():",
       '    print("first")',
       '    print("second")',
       "",
     ].join("\n"));
-    await Bun.write(rule, [
-      "version: 1",
-      "id: python/excessive-prints",
-      "language: python",
-      "summary: Function contains multiple print calls",
-      "severity: info",
-      "select:",
-      "  pattern: print($VALUE)",
-      "owner:",
-      "  nearest: [function_definition]",
-      "aggregate: count",
-      "threshold:",
-      "  gt: 1",
-      "evidence:",
-      "  subject: print call sites",
-      "",
-    ].join("\n"));
+    await Bun.write(rule, `#badbox 1
+
+rule python/excessive-prints for python {
+  summary "Function contains multiple print calls"
+  find code(value) \`print(value)\`
+  group by nearest node(function_definition)
+  when count > 1
+  report {
+    severity info
+    message "Function contains multiple print calls"
+    evidence "print call sites"
+  }
+}
+`);
 
     const result = await inspect({ paths: [source], rulePaths: [rule] });
     expect(result.languages).toEqual(["python"]);
@@ -234,15 +231,15 @@ test rust/excessive-clones "reports excessive clones" {
     })).rejects.toThrow();
   });
 
-  test("changing only YAML selects different syntax and metadata", async () => {
+  test("changing only the rule file selects different syntax and metadata", async () => {
     const root = await temporaryRoot();
     const source = join(root, "input.rs");
     await Bun.write(source, 'fn example() { let label = "🦀"; value.clone().clone(); value.clone(); value.unwrap(); value.unwrap(); }');
-    const yaml = await Bun.file(rustRulePath).text();
-    const changedRule = join(root, "changed.yaml");
-    await Bun.write(changedRule, yaml
+    const original = await Bun.file(rustRulePath).text();
+    const changedRule = join(root, "changed.badbox");
+    await Bun.write(changedRule, original
       .replace("rust/excessive-clones", "probe/changed-pattern")
-      .replace("$VALUE.clone()", "$VALUE.unwrap()")
+      .replace("value.clone()", "value.unwrap()")
       .replaceAll("clone call sites", "unwrap call sites"));
 
     const result = await inspect({ paths: [source], rulePaths: [rustRulePath, changedRule] });
@@ -251,7 +248,7 @@ test rust/excessive-clones "reports excessive clones" {
     ]);
     expect(result.rules[1]?.evidenceSubject).toBe("unwrap call sites");
 
-    await Bun.write(changedRule, (await Bun.file(changedRule).text()).replace("gt: 1", "gt: 2"));
+    await Bun.write(changedRule, (await Bun.file(changedRule).text()).replace("param limit = 1", "param limit = 2"));
     expect((await inspect({ paths: [source], rulePaths: [changedRule] })).findingCount).toBe(0);
   });
 
@@ -299,27 +296,31 @@ test rust/excessive-clones "reports excessive clones" {
   test("invalid rules and unreadable paths fail explicitly", async () => {
     const root = await temporaryRoot();
     const original = await Bun.file(rustRulePath).text();
-    const rulePath = join(root, "invalid.yaml");
-    for (const yaml of [
-      original.replace("version: 1", "version: 99"),
+    const rulePath = join(root, "invalid.badbox");
+    const find = "find code(value) `value.clone()`";
+    for (const rule of [
+      original.replace("#badbox 1", "#badbox 99"),
       original.replace("rust/excessive-clones", "no-namespace"),
-      original.replace("language: rust", "language: zig"),
-      original.replace("aggregate: count", "aggregate: sum"),
-      original.replace("gt: 1", "gt: -1"),
-      original.replace("[function_item, closure_expression]", "[]"),
-      original.replace("function_item", "nonexistent_kind"),
-      original.replace("pattern: $VALUE.clone()", "kind: nonexistent_kind"),
-      original.replace("pattern: $VALUE.clone()", 'pattern: ""'),
-      original.replace("pattern: $VALUE.clone()", "pattern: $VALUE.clone()\n  kind: call_expression"),
-      original + "unexpected: true\n",
+      original.replace("for rust", "for klingon"),
+      original.replace("when count", "when sum"),
+      original.replace("param limit = 1", "param limit = -1"),
+      original.replace("nearest callable", "nearest node()"),
+      original.replace("nearest callable", "nearest node(nonexistent_kind)"),
+      original.replace(find, "find node nonexistent_kind"),
+      original.replace(find, "find code(value) ``"),
+      original.replace(find, `${find}\n  find node call_expression`),
+      original.replace(find, `${find}\n  unexpected true`),
     ]) {
-      await Bun.write(rulePath, yaml);
+      await Bun.write(rulePath, rule);
       await expect(inspect({ paths: [fixtureRoot], rulePaths: [rulePath] })).rejects.toThrow();
     }
+    const yamlRule = join(root, "rule.yaml");
+    await Bun.write(yamlRule, "id: rust/excessive-clones\n");
+    await expect(inspect({ paths: [fixtureRoot], rulePaths: [yamlRule] })).rejects.toThrow("unsupported rule file");
     await expect(inspect({ paths: [fixtureRoot], rulePaths: [] })).rejects.toThrow("rulePaths");
     await expect(inspect({ paths: [fixtureRoot], rulePaths: [rustRulePath, rustRulePath] })).rejects.toThrow("duplicate rule ID");
     await expect(inspect({ paths: [join(root, "missing")], rulePaths: [goRulePath] })).rejects.toThrow("source path");
-    await expect(inspect({ paths: [fixtureRoot], rulePaths: [join(root, "missing.yaml")] })).rejects.toThrow("rule");
+    await expect(inspect({ paths: [fixtureRoot], rulePaths: [join(root, "missing.badbox")] })).rejects.toThrow("rule");
   });
 
   test("profiles phases, shares execution, and invalidates native caches", async () => {
@@ -327,8 +328,8 @@ test rust/excessive-clones "reports excessive clones" {
     const source = join(root, "input.rs");
     await Bun.write(source, "fn example() { a.clone(); b.clone(); }");
     const original = await Bun.file(rustRulePath).text();
-    const firstRule = join(root, "first.yaml");
-    const secondRule = join(root, "second.yaml");
+    const firstRule = join(root, "first.badbox");
+    const secondRule = join(root, "second.badbox");
     await Bun.write(firstRule, original.replace("rust/excessive-clones", "probe/first"));
     await Bun.write(secondRule, original.replace("rust/excessive-clones", "probe/second"));
     const run = async () => await inspect({
@@ -356,7 +357,7 @@ test rust/excessive-clones "reports excessive clones" {
     expect(changedSource.performance?.parseCacheMisses).toBe(1);
     expect(records(changedSource).map((finding) => finding.observed)).toEqual([3, 3]);
 
-    await Bun.write(firstRule, (await Bun.file(firstRule).text()).replace("severity: info", "severity: warning"));
+    await Bun.write(firstRule, (await Bun.file(firstRule).text()).replace("severity info", "severity warning"));
     const changedRule = await run();
     expect(changedRule.performance?.ruleCacheHits).toBe(1);
     expect(changedRule.performance?.ruleCacheMisses).toBe(1);

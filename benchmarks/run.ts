@@ -147,9 +147,8 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
         const rules = makeRules(input.language, density, 100);
         const rulePaths = [];
         for (const [index, rule] of rules.entries()) {
-          const path = join(ruleDirectory, `${index}.yaml`);
-          // JSON is a YAML subset; use it to avoid adding a benchmark-only serializer dependency.
-          await writeFile(path, JSON.stringify(rule));
+          const path = join(ruleDirectory, `${index}.badbox`);
+          await writeFile(path, rule.source);
           rulePaths.push(path);
         }
         // Untimed single-rule references detect lost/duplicated results when batching.

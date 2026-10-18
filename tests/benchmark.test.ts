@@ -33,8 +33,8 @@ test("benchmark workers consume native results and detect incorrect expectations
     const paths = [fileURLToPath(new URL("./fixtures/counts/sample.rs", import.meta.url))];
     const rulePaths = [];
     for (const [index, rule] of makeRules("rust", "dense", 10).entries()) {
-      const path = join(root, `${index}.yaml`);
-      await Bun.write(path, JSON.stringify(rule));
+      const path = join(root, `${index}.badbox`);
+      await Bun.write(path, rule.source);
       rulePaths.push(path);
     }
     const options = { paths, rulePaths };
@@ -78,8 +78,8 @@ test("all benchmark selector templates compile and batched results agree with in
         const rulePaths = [];
         const expected: Record<string, string> = {};
         for (const [index, rule] of makeRules(language, density, 10).entries()) {
-          const path = join(root, `${language}-${density}-${index}.yaml`);
-          await Bun.write(path, JSON.stringify(rule));
+          const path = join(root, `${language}-${density}-${index}.badbox`);
+          await Bun.write(path, rule.source);
           rulePaths.push(path);
           Object.assign(expected, fingerprints(await inspect({ paths, rulePaths: [path] })));
         }
