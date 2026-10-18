@@ -105,15 +105,16 @@ The DSL currently supports:
 - source-shaped `code(...)` selectors with declared captures, optionally parsed in a context with
   `select <kind>`;
 - raw `node ...` selectors;
-- `group by nearest callable` for Rust, Go, PowerShell, and Zig;
+- `group by nearest callable` for Rust, Go, PowerShell, Zig, TypeScript, TSX, JavaScript, Python,
+  Java, C, C++, C#, PHP, Lua, Kotlin, Swift, Dart, Bash, and Ruby;
 - explicit nearest node kinds for all supported languages;
 - capture text operators `==`, `!=`, `in`, `not in`, and Rust-regex `matches`, comparing against
   string literals or string parameters;
 - `where match inside any|all { ... }` and `where match not inside any|all { ... }`;
 - `where group has any|all { ... }`;
 - `where group lacks any|all { ... }`;
-- `where match follows any|all { ... }` and `where match precedes any|all { ... }` for Rust, Go,
-  PowerShell, and Zig callable groups;
+- `where match follows any|all { ... }` and `where match precedes any|all { ... }` for callable
+  groups in those languages;
 - strictly greater-than count thresholds and scalar parameter overrides.
 
 Ordering is statement-level within the same nearest callable and lexical block; intervening

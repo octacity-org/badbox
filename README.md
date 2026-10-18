@@ -194,7 +194,7 @@ relations, parameters, and fixture declarations. Runnable DSL examples live unde
 | Area | Supported today |
 | --- | --- |
 | Selection | Source-shaped `code(...)` patterns, optionally parsed in a context with `select`, and raw syntax-node kinds |
-| Ownership | Nearest callable for Rust, Go, PowerShell, and Zig; explicit nearest node kinds elsewhere |
+| Ownership | Nearest callable for Rust, Go, PowerShell, Zig, TypeScript, TSX, JavaScript, Python, Java, C, C++, C#, PHP, Lua, Kotlin, Swift, Dart, Bash, and Ruby; explicit nearest node kinds elsewhere |
 | Capture predicates | `==`, `!=`, `in`, `not in`, and Rust-regex `matches` |
 | Containment | `where match inside any\|all` and `where match not inside any\|all` |
 | Owner evidence | `where group has any\|all` and `where group lacks any\|all` |
@@ -339,7 +339,9 @@ output remains deterministic.
 - Counts describe syntax sites, not runtime execution counts or costs.
 - Immediate-sibling ordering is not implemented. `follows` and `precedes` allow intervening sibling
   statements.
-- Ordering by nearest callable currently targets Rust, Go, PowerShell, and Zig.
+- Ordering by nearest callable is available only for languages with a `callable` mapping. A body
+  without its own statement-list node, such as a braceless `if (flag) target();`, belongs to the
+  statement that contains it.
 - Only strict greater-than count aggregation is implemented.
 - Syntax-error files and source files that are not UTF-8 produce diagnostics and no partial
   findings.
