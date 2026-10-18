@@ -817,3 +817,110 @@ rule rust/shared-${index} for rust {
     expect(result.performance?.ruleEvaluations).toBe(50);
   });
 });
+
+describe("rule features", () => {
+  const ruleBody = (id: string, language: string, body: string) => `rule ${id} for ${language} {
+  summary "probe"
+${body}
+  when count > 0
+  report {
+    severity info
+    message "probe"
+    evidence "probe sites"
+  }
+}
+`;
+  const ownerSummary = async (result: CheckResult) => await Promise.all(records(result).map(async (finding) => [
+    finding.rule.id, /(?:fn|void) (\w+)/.exec(await ownerText(finding))?.[1], finding.observed,
+  ]));
+
+  test("match not inside keeps only matches outside the listed nodes", async () => {
+    const root = await temporaryRoot();
+    await Bun.write(join(root, "input.rs"), `
+fn outside() { a.unwrap(); b.unwrap(); }
+fn mixed() { a.unwrap(); loop { b.unwrap(); break; } let f = || c.unwrap(); }
+fn nested() { loop { let f = || d.unwrap(); break; } }
+`);
+    const rules = join(root, "rules.badbox");
+    const select = `  find code(value) \`value.unwrap()\`
+  group by nearest node(function_item)`;
+    await Bun.write(rules, `#badbox 1
+${ruleBody("rust/outside-any", "rust", `${select}
+  where match not inside any { node loop_expression node closure_expression }`)}
+${ruleBody("rust/outside-all", "rust", `${select}
+  where match not inside all { node loop_expression node closure_expression }`)}`);
+
+    const result = await inspect({ paths: [root], rulePaths: [rules] });
+    expect(result.diagnostics).toEqual([]);
+    expect(await ownerSummary(result)).toEqual([
+      ["rust/outside-any", "outside", 2],
+      ["rust/outside-all", "outside", 2],
+      ["rust/outside-any", "mixed", 1],
+      ["rust/outside-all", "mixed", 3],
+    ]);
+  });
+
+  test("text conditions read string parameters and their overrides", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "input.rs");
+    await Bun.write(source, "fn calls() { a.clone(); b.unwrap(); c.unwrap(); }");
+    const body = `  param method = "clone"
+  find code(value, name) \`value.name()\`
+  group by nearest callable
+  where text(name) == method`;
+    const first = join(root, "first.badbox");
+    const second = join(root, "second.badbox");
+    const regex = join(root, "regex.badbox");
+    await Bun.write(first, `#badbox 1\n${ruleBody("rust/named-calls", "rust", body)}`);
+    await Bun.write(second, `#badbox 1\n${ruleBody("rust/named-calls-copy", "rust", body)}`);
+    await Bun.write(regex, `#badbox 1\n${ruleBody("rust/matched-calls", "rust", `  param pattern = "^un"
+  find code(value, name) \`value.name()\`
+  group by nearest callable
+  where text(name) in ["clone", pattern]
+  where text(name) matches pattern`)}`);
+    const observed = async (rulePaths: string[], parameters = {}) =>
+      records(await inspect({ paths: [source], rulePaths, parameters })).map((finding) => [finding.rule.id, finding.observed]);
+
+    expect(await observed([first])).toEqual([["rust/named-calls", 1]]);
+    expect(await observed([first], { "rust/named-calls.method": "unwrap" })).toEqual([["rust/named-calls", 2]]);
+    // Identical rules with different effective values must not share execution.
+    expect(await observed([first, second], { "rust/named-calls.method": "unwrap" })).toEqual([
+      ["rust/named-calls", 2], ["rust/named-calls-copy", 1],
+    ]);
+    expect(await observed([first])).toEqual([["rust/named-calls", 1]]);
+    // `in` compares literally, so "^un" only matters through `matches`.
+    expect(await observed([regex])).toEqual([]);
+    expect(await observed([regex], { "rust/matched-calls.pattern": "clone" })).toEqual([["rust/matched-calls", 1]]);
+    await expect(inspect({
+      paths: [source], rulePaths: [regex], parameters: { "rust/matched-calls.pattern": "(" },
+    })).rejects.toThrow("rust/matched-calls");
+  });
+
+  test("code patterns select a node from a parsing context", async () => {
+    const root = await temporaryRoot();
+    await Bun.write(join(root, "input.c"), `
+void releases(void *a, void *b) { free(a); free(b); }
+void prints(void) { puts("x"); }
+`);
+    const rules = join(root, "rules.badbox");
+    const group = "  group by nearest node(function_definition)";
+    await Bun.write(rules, `#badbox 1
+${ruleBody("c/free-bare", "c", `  find code(pointer) \`free(pointer)\`\n${group}`)}
+${ruleBody("c/free-calls", "c", `  find code(pointer) \`void f() { free(pointer); }\` select call_expression\n${group}`)}
+${ruleBody("c/calls-with-free", "c", `  find node call_expression
+${group}
+  where group has any { code(pointer) \`void f() { free(pointer); }\` select call_expression }`)}`);
+
+    const result = await inspect({ paths: [root], rulePaths: [rules] });
+    expect(result.diagnostics).toEqual([]);
+    // Without context, \`free(pointer);\` parses as a declaration and matches no calls.
+    expect(await ownerSummary(result)).toEqual([
+      ["c/free-calls", "releases", 2],
+      ["c/calls-with-free", "releases", 2],
+    ]);
+
+    await Bun.write(rules, `#badbox 1
+${ruleBody("c/free-calls", "c", `  find code(pointer) \`void f() { free(pointer); }\` select no_such_kind\n${group}`)}`);
+    await expect(inspect({ paths: [root], rulePaths: [rules] })).rejects.toThrow("no_such_kind");
+  });
+});

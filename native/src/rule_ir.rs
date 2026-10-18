@@ -3,7 +3,7 @@
 use crate::model::{Language, Severity};
 use std::collections::BTreeMap;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Rule {
     pub id: String,
     pub language: Language,
@@ -30,6 +30,11 @@ pub enum ParameterValue {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StructuralSelection {
     Pattern(String),
+    /// A pattern parsed inside `context`, matching its node of kind `selector`.
+    Contextual {
+        context: String,
+        selector: String,
+    },
     Kind(String),
 }
 
@@ -38,7 +43,7 @@ pub enum Condition {
     Text {
         capture: String,
         operator: TextOperator,
-        values: Vec<String>,
+        values: Vec<TextValue>,
     },
     Relation {
         target: RelationTarget,
@@ -47,6 +52,13 @@ pub enum Condition {
         selections: Vec<StructuralSelection>,
         shared_captures: Vec<Vec<String>>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TextValue {
+    Literal(String),
+    /// A rule string parameter, resolved with overrides before compilation.
+    Parameter(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,13 +81,30 @@ pub enum Relation {
     Has,
     Lacks,
     Inside,
+    NotInside,
     Follows,
     Precedes,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Scope {
     NearestAncestor(Vec<String>),
+}
+
+impl Rule {
+    /// Parameters whose values text conditions compile into matchers.
+    pub fn text_parameters(&self) -> impl Iterator<Item = &str> {
+        self.conditions
+            .iter()
+            .flat_map(|condition| match condition {
+                Condition::Text { values, .. } => values.as_slice(),
+                Condition::Relation { .. } => &[],
+            })
+            .filter_map(|value| match value {
+                TextValue::Parameter(name) => Some(name.as_str()),
+                TextValue::Literal(_) => None,
+            })
+    }
 }
 
 impl Scope {
@@ -104,7 +133,7 @@ impl Threshold {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Evidence {
     pub subject: String,
 }

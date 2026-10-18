@@ -193,14 +193,14 @@ relations, parameters, and fixture declarations. Runnable DSL examples live unde
 
 | Area | Supported today |
 | --- | --- |
-| Selection | Source-shaped `code(...)` patterns and raw syntax-node kinds |
+| Selection | Source-shaped `code(...)` patterns, optionally parsed in a context with `select`, and raw syntax-node kinds |
 | Ownership | Nearest callable for Rust, Go, PowerShell, and Zig; explicit nearest node kinds elsewhere |
 | Capture predicates | `==`, `!=`, `in`, `not in`, and Rust-regex `matches` |
-| Containment | `where match inside any\|all` |
+| Containment | `where match inside any\|all` and `where match not inside any\|all` |
 | Owner evidence | `where group has any\|all` and `where group lacks any\|all` |
 | Ordering | Statement-level `follows` and `precedes` within one callable and lexical block |
 | Aggregation | Distinct selected ranges counted per owner with strict `count > threshold` |
-| Parameters | Rule-local scalar defaults with programmatic overrides |
+| Parameters | Rule-local scalar defaults with programmatic overrides; integers feed `count`, strings feed text conditions |
 | Rule format | Tiny DSL, compiled to the Badbox Rule IR |
 | Output | Deterministically ordered, bounded findings with exact total counts |
 

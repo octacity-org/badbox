@@ -41,6 +41,8 @@ pub enum Selection {
     Code {
         captures: Vec<Capture>,
         template: String,
+        /// With a selector, `template` is context and the pattern is its node of this kind.
+        selector: Option<String>,
     },
     Node(String),
 }
@@ -73,7 +75,7 @@ pub enum WhereClause {
     Text {
         capture: String,
         operator: TextOperator,
-        values: Vec<String>,
+        values: Vec<TextValue>,
     },
     Relation {
         target: RelationTarget,
@@ -81,6 +83,13 @@ pub enum WhereClause {
         require_all: bool,
         selections: Vec<Selection>,
     },
+}
+
+/// A text comparison value: a string literal or the name of a string parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextValue {
+    String(String),
+    Parameter(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +112,7 @@ pub enum Relation {
     Has,
     Lacks,
     Inside,
+    NotInside,
     Follows,
     Precedes,
 }
@@ -313,12 +323,29 @@ impl Parser {
             Selection::Node(_) => &[],
         };
         for clause in &where_clauses {
-            if let WhereClause::Text { capture, .. } = clause
-                && !primary_captures
-                    .iter()
-                    .any(|declared| declared.name == *capture)
+            let WhereClause::Text {
+                capture, values, ..
+            } = clause
+            else {
+                continue;
+            };
+            if !primary_captures
+                .iter()
+                .any(|declared| declared.name == *capture)
             {
                 return Err(self.error(format!("unknown primary capture {capture}")));
+            }
+            for value in values {
+                let TextValue::Parameter(name) = value else {
+                    continue;
+                };
+                let Some(parameter) = parameters.iter().find(|parameter| &parameter.name == name)
+                else {
+                    return Err(self.error(format!("unknown parameter {name}")));
+                };
+                if !matches!(parameter.value, ComparisonValue::String(_)) {
+                    return Err(self.error(format!("text parameter {name} must be a string")));
+                }
             }
         }
         Ok(Rule {
@@ -379,7 +406,16 @@ impl Parser {
         if template.trim().is_empty() {
             return Err(self.error("code pattern must not be empty"));
         }
-        Ok(Selection::Code { captures, template })
+        let selector = if self.take_keyword("select") {
+            Some(self.ident()?)
+        } else {
+            None
+        };
+        Ok(Selection::Code {
+            captures,
+            template,
+            selector,
+        })
     }
 
     fn parse_group(&mut self) -> Result<Group, ParseError> {
@@ -423,9 +459,9 @@ impl Parser {
                 return Err(self.error("expected ==, !=, in, not in, or matches"));
             };
             let values = if matches!(operator, TextOperator::In | TextOperator::NotIn) {
-                self.string_list()?
+                self.text_value_list()?
             } else {
-                vec![self.string()?]
+                vec![self.text_value()?]
             };
             return Ok(WhereClause::Text {
                 capture,
@@ -445,6 +481,12 @@ impl Parser {
             "has" => Relation::Has,
             "lacks" => Relation::Lacks,
             "inside" => Relation::Inside,
+            "not" => {
+                if !self.take_keyword("inside") {
+                    return Err(self.error("expected inside after not"));
+                }
+                Relation::NotInside
+            }
             "follows" => Relation::Follows,
             "precedes" => Relation::Precedes,
             other => return Err(self.error(format!("unknown relation {other}"))),
@@ -559,14 +601,21 @@ impl Parser {
         })
     }
 
-    fn string_list(&mut self) -> Result<Vec<String>, ParseError> {
+    fn text_value(&mut self) -> Result<TextValue, ParseError> {
+        match self.peek_kind() {
+            Some(TokenKind::Ident(_)) => Ok(TextValue::Parameter(self.ident()?)),
+            _ => Ok(TextValue::String(self.string()?)),
+        }
+    }
+
+    fn text_value_list(&mut self) -> Result<Vec<TextValue>, ParseError> {
         self.symbol(TokenKind::LeftBracket)?;
         let mut values = Vec::new();
         if self.take_symbol(TokenKind::RightBracket) {
             return Err(self.error("text value list must not be empty"));
         }
         loop {
-            values.push(self.string()?);
+            values.push(self.text_value()?);
             if self.take_symbol(TokenKind::RightBracket) {
                 break;
             }

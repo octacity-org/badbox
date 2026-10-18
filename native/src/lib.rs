@@ -453,6 +453,17 @@ fn resolve_rules(
         .zip(parameters)
         .map(|(loaded, parameters)| {
             let rule = AstGrepBackend::rule(&loaded.rule);
+            // Text matchers are compiled with parameter values, so overridden ones recompile.
+            let compiled = if rule
+                .text_parameters()
+                .any(|name| parameters.get(name) != rule.parameters.get(name))
+            {
+                let mut rule = rule.clone();
+                rule.parameters = parameters.clone();
+                Arc::new(AstGrepBackend::compile(rule)?)
+            } else {
+                Arc::clone(&loaded.rule)
+            };
             let threshold = if let Some(threshold) = threshold_override {
                 threshold
             } else if let Some(name) = &rule.threshold_parameter {
@@ -483,7 +494,7 @@ fn resolve_rules(
                 }
             }
             Ok(ResolvedRule {
-                rule: Arc::clone(&loaded.rule),
+                rule: compiled,
                 fingerprint: *fingerprint.finalize().as_bytes(),
                 threshold,
             })

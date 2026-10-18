@@ -102,12 +102,14 @@ find -> where -> nearest owner -> distinct-range count -> threshold -> finding
 
 The DSL currently supports:
 
-- source-shaped `code(...)` selectors with declared captures;
+- source-shaped `code(...)` selectors with declared captures, optionally parsed in a context with
+  `select <kind>`;
 - raw `node ...` selectors;
 - `group by nearest callable` for Rust, Go, PowerShell, and Zig;
 - explicit nearest node kinds for all supported languages;
-- capture text operators `==`, `!=`, `in`, `not in`, and Rust-regex `matches`;
-- `where match inside any|all { ... }`;
+- capture text operators `==`, `!=`, `in`, `not in`, and Rust-regex `matches`, comparing against
+  string literals or string parameters;
+- `where match inside any|all { ... }` and `where match not inside any|all { ... }`;
 - `where group has any|all { ... }`;
 - `where group lacks any|all { ... }`;
 - `where match follows any|all { ... }` and `where match precedes any|all { ... }` for Rust, Go,

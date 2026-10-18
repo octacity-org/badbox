@@ -3,9 +3,12 @@
 use super::{Selection, SelectionTimings, StructuralBackend};
 use crate::{
     model::{ByteRange, Language, OwnedMatch, RawOwner},
-    rule_ir::{Condition, Relation, RelationTarget, Rule, StructuralSelection, TextOperator},
+    rule_ir::{
+        Condition, ParameterValue, Relation, RelationTarget, Rule, StructuralSelection,
+        TextOperator, TextValue,
+    },
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use ast_grep_core::{
     AstGrep, Matcher, Node, Pattern,
     language::Language as AstGrepLanguage,
@@ -404,16 +407,24 @@ fn compile_selector(
     source_language: Language,
     language: BackendLanguage,
 ) -> Result<Arc<CompiledStructuralSelector>> {
+    let checked_pattern = |pattern: &str| -> Result<()> {
+        ensure!(!pattern.trim().is_empty(), "pattern must not be empty");
+        if source_language == Language::PowerShell {
+            ensure!(
+                !pattern.contains(POWERSHELL_CAPTURE_PREFIX),
+                "PowerShell pattern uses Badbox's reserved capture marker"
+            );
+        }
+        Ok(())
+    };
     let matcher = match selection {
         StructuralSelection::Pattern(pattern) => {
-            ensure!(!pattern.trim().is_empty(), "pattern must not be empty");
-            if source_language == Language::PowerShell {
-                ensure!(
-                    !pattern.contains(POWERSHELL_CAPTURE_PREFIX),
-                    "PowerShell pattern uses Badbox's reserved capture marker"
-                );
-            }
+            checked_pattern(pattern)?;
             CompiledSelector::Pattern(Box::new(Pattern::try_new(pattern, language)?))
+        }
+        StructuralSelection::Contextual { context, selector } => {
+            checked_pattern(context)?;
+            CompiledSelector::Pattern(Box::new(Pattern::contextual(context, selector, language)?))
         }
         StructuralSelection::Kind(kind) => {
             CompiledSelector::Kind(KindMatcher::try_new(kind, language)?)
@@ -431,7 +442,17 @@ fn compile_selector(
     }))
 }
 
-fn compile_text_matcher(operator: TextOperator, values: &[String]) -> Result<CompiledTextMatcher> {
+fn compile_text_matcher(
+    operator: TextOperator,
+    values: &[TextValue],
+) -> Result<CompiledTextMatcher> {
+    let values = values
+        .iter()
+        .map(|value| match value {
+            TextValue::Literal(value) => Ok(value.clone()),
+            TextValue::Parameter(name) => bail!("text parameter {name} is unresolved"),
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(match operator {
         TextOperator::Equal => {
             ensure!(values.len() == 1, "text equality requires one value");
@@ -481,7 +502,22 @@ impl StructuralBackend for AstGrepBackend {
         let selector = compile_selector(&rule.selection, rule.language, language)?;
         let mut text_conditions = Vec::new();
         let mut relations = Vec::new();
-        for condition in &rule.conditions {
+        // Parameter values are resolved here, so the execution key holds literals only.
+        let mut resolved_conditions = rule.conditions.clone();
+        for condition in &mut resolved_conditions {
+            if let Condition::Text { values, .. } = condition {
+                for value in values {
+                    if let TextValue::Parameter(name) = value {
+                        let Some(ParameterValue::String(resolved)) = rule.parameters.get(name)
+                        else {
+                            bail!("rule {} has invalid text parameter {name}", rule.id);
+                        };
+                        *value = TextValue::Literal(resolved.clone());
+                    }
+                }
+            }
+        }
+        for condition in &resolved_conditions {
             match condition {
                 Condition::Text {
                     capture,
@@ -538,7 +574,7 @@ impl StructuralBackend for AstGrepBackend {
         let execution_key = ExecutionKey {
             language: rule.language,
             selector: rule.selection.clone(),
-            conditions: rule.conditions.clone(),
+            conditions: resolved_conditions,
             owners: owner_key,
         };
         let mut capture_offset = 0;
@@ -987,7 +1023,7 @@ fn relation_matches(
     };
     match relation.relation {
         Relation::Has | Relation::Inside => matched,
-        Relation::Lacks => !matched,
+        Relation::Lacks | Relation::NotInside => !matched,
         Relation::Follows | Relation::Precedes => {
             unreachable!("ordering relations use statement contexts")
         }
