@@ -991,7 +991,8 @@ fn run_rule_tests(options: RuleTestOptions) -> Result<Vec<RuleTestResult>> {
             .with_context(|| format!("rule {}", rule_file.display()))?;
         let directory = rule_file.parent().unwrap_or(Path::new(""));
         for test in tests {
-            let input = directory.join(&test.input);
+            // Rebuild from components so `/` in the DSL becomes the platform separator.
+            let input = directory.join(Path::new(&test.input).components().collect::<PathBuf>());
             let expected = TestCounts {
                 findings: test.findings,
                 count: test.count,
