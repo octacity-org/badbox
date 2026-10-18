@@ -187,8 +187,7 @@ blocks remain separate.
 
 See the [tiny DSL reference](native/tiny-dsl/README.md) for the complete grammar, validation rules,
 relations, parameters, and fixture declarations. Runnable DSL examples live under
-[`examples/rules`](examples/rules). YAML equivalents under [`examples/yaml`](examples/yaml) exercise
-the compatibility frontend; they are never loaded automatically.
+[`examples/rules`](examples/rules); they are never loaded automatically.
 
 ## Capabilities
 
@@ -202,7 +201,7 @@ the compatibility frontend; they are never loaded automatically.
 | Ordering | Statement-level `follows` and `precedes` within one callable and lexical block |
 | Aggregation | Distinct selected ranges counted per owner with strict `count > threshold` |
 | Parameters | Rule-local scalar defaults with programmatic overrides |
-| Frontends | Tiny DSL plus YAML compatibility, both compiled to the same Badbox Rule IR |
+| Rule format | Tiny DSL, compiled to the Badbox Rule IR |
 | Output | Deterministically ordered, bounded findings with exact total counts |
 
 ## Supported languages
@@ -234,7 +233,7 @@ without the `.badbox` suffix, and existing files.
 
 ### `check`
 
-Recursively loads `.badbox`, `.yaml`, and `.yml` rule files from the current project's `.badbox/`
+Recursively loads `.badbox` rule files from the current project's `.badbox/`
 directory. With no source paths, it checks the current project. Explicit source paths narrow source
 discovery but do not change where rules are loaded from.
 
@@ -309,7 +308,7 @@ records without materializing another result array.
 flowchart TD
     CLI["CLI or TypeScript inspect()"]
     Native["Native N-API boundary"]
-    Frontend["DSL or YAML frontend"]
+    Frontend["DSL frontend"]
     IR["Badbox Rule IR"]
     Plan["Per-language shared finder plan"]
     Parser["Tree-sitter parsing and bounded caches"]
@@ -386,10 +385,10 @@ See the [benchmark methodology](benchmarks/README.md),
 
 | Path | Purpose |
 | --- | --- |
-| `src/cli.ts` | `check` and `create` commands |
+| `src/cli.ts` | `check`, `test`, and `create` commands |
 | `src/scanner/` | Public TypeScript API and native-addon loading |
 | `native/src/rule_ir.rs` | Backend-independent rule model |
-| `native/src/frontends/` | DSL/YAML lowering and validation |
+| `native/src/frontends/` | DSL lowering and validation |
 | `native/src/backend/` | Structural backend contract and ast-grep implementation |
 | `native/src/evaluator.rs` | Language-independent aggregation and findings |
 | `native/tiny-dsl/` | Rust parser crate, tests, and DSL reference |

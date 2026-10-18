@@ -25,8 +25,8 @@ rewriting or LLM reasoning to the native engine.
   invalid rules, and an empty test set produce a nonzero exit. `count` requires `findings 1`.
 - Findings do not make the CLI fail. Invalid rules, invalid input, I/O errors, or syntax diagnostics
   make the check incomplete and produce a nonzero exit.
-- DSL is the primary authoring format. YAML is a compatibility frontend. Both compile to the same
-  Badbox-owned Rule IR.
+- The tiny DSL is the only rule format and compiles to the Badbox-owned Rule IR. YAML rules were
+  removed; do not reintroduce a second rule frontend without an explicit request.
 - Keep output deterministic: stable discovery, rule loading, findings, and diagnostics ordering are
   part of the contract.
 
@@ -39,7 +39,7 @@ CLI / TypeScript inspect()
 native N-API inspect() boundary
         |
         v
-DSL or YAML frontend -> Badbox Rule IR
+DSL frontend -> Badbox Rule IR
         |
         v
 per-language execution groups + shared FinderPlan
@@ -81,12 +81,11 @@ this split when extending execution; do not reintroduce per-rule tree scans.
   execution, and compact result assembly.
 - `native/src/rule_ir.rs` — engine-owned rule model.
 - `native/src/frontends/dsl.rs` — tiny-DSL-to-IR lowering and validation.
-- `native/src/frontends/yaml.rs` — YAML compatibility lowering.
 - `native/src/backend/ast_grep.rs` — parser registry, compiled selectors, shared finder planning,
   structural matching, ownership, and relational fact collection.
 - `native/src/evaluator.rs` — language-independent aggregation and finding construction.
 - `native/tiny-dsl/` — standalone Rust parser crate and authoritative DSL reference.
-- `examples/rules/` and `examples/yaml/` — runnable examples, never defaults.
+- `examples/rules/` — runnable examples, never defaults.
 - `tests/` — Bun integration, CLI, packaging, corpus, and benchmark-contract tests.
 - `tests/fixtures/zova/` — frozen, independently labeled real-code corpus.
 - `benchmarks/` — reproducible rule-scaling, latency, and memory harness.
@@ -148,7 +147,6 @@ type detection.
   one handwritten detector per language for behavior the generic evaluator can express.
 - Share exact selectors through `FinderPlan`; keep rule evaluation independent. Treat more ambitious
   selector-subsumption or query-optimizer work as a measured optimization, not a correctness shortcut.
-- Preserve YAML compatibility unless removal is explicitly requested.
 - Do not add bundled default rules. Examples belong under `examples/`.
 - Do not add unbounded AST caches, result buffers, worker counts, or cross-file state.
 - Do not claim a performance improvement from selector counts alone. Use the benchmark harness for

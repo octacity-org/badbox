@@ -4,44 +4,49 @@ import { iterateFindings, type CheckResult, type InspectOptions, type Performanc
 
 export type Language = "rust" | "go";
 export type Density = "sparse" | "dense";
-type Selector = { pattern: string } | { kind: string };
+const node = (kind: string) => `node ${kind}`;
 
-const selectors: Record<Language, Record<Density, readonly Selector[]>> = {
+/** DSL `find` selectors. */
+const selectors: Record<Language, Record<Density, readonly string[]>> = {
   rust: {
     sparse: ["clone", "unwrap", "is_some", "is_none", "ok", "to_owned", "to_string", "is_empty", "len"]
-      .map((method) => ({ pattern: `$VALUE.${method}()` }))
-      .concat([{ pattern: "$VALUE.expect($$$ARGS)" }]),
+      .map((method) => `code(value) \`value.${method}()\``)
+      .concat(["code(value, args...) `value.expect(args)`"]),
     dense: ["call_expression", "identifier", "field_identifier", "field_expression", "arguments",
       "let_declaration", "return_expression", "reference_expression", "type_identifier", "block"]
-      .map((kind) => ({ kind })),
+      .map(node),
   },
   go: {
-    sparse: [{ kind: "go_statement" }, ...["panic($$$ARGS)", "close($$$ARGS)", "recover()",
-      "copy($$$ARGS)", "delete($$$ARGS)", "make($$$ARGS)", "append($$$ARGS)", "new($TYPE)", "len($VALUE)"]
-      .map((pattern) => ({ pattern }))],
+    sparse: [node("go_statement"), ...["panic", "close"].map((name) => `code(args...) \`${name}(args)\``),
+      "code() `recover()`", ...["copy", "delete", "make", "append"].map((name) => `code(args...) \`${name}(args)\``),
+      "code(type_name) `new(type_name)`", "code(value) `len(value)`"],
     dense: ["call_expression", "identifier", "argument_list", "selector_expression", "short_var_declaration",
       "assignment_statement", "return_statement", "binary_expression", "expression_statement", "block"]
-      .map((kind) => ({ kind })),
+      .map(node),
   },
 };
 
 /** Benchmark-only selectors; these are not product rules or engineering recommendations. */
 export function makeRules(language: Language, density: Density, count: number) {
   if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error("rule count must be 1..100");
-  return Array.from({ length: count }, (_, index) => ({
-    version: 1,
-    id: `bench/${language}-${density}-${String(index).padStart(3, "0")}`,
-    language,
-    summary: "Benchmark selection, not a code-quality recommendation",
-    severity: "info",
-    select: selectors[language][density][index % 10]!,
-    owner: { nearest: language === "rust"
-      ? ["function_item", "closure_expression"]
-      : ["function_declaration", "method_declaration", "func_literal"] },
-    aggregate: "count",
-    threshold: { gt: 0 },
-    evidence: { subject: "selected syntax sites" },
-  }));
+  return Array.from({ length: count }, (_, index) => {
+    const id = `bench/${language}-${density}-${String(index).padStart(3, "0")}`;
+    const select = selectors[language][density][index % 10]!;
+    return { id, language, select, source: `#badbox 1
+
+rule ${id} for ${language} {
+  summary "Benchmark selection, not a code-quality recommendation"
+  find ${select}
+  group by nearest callable
+  when count > 0
+  report {
+    severity info
+    message "Benchmark selection, not a code-quality recommendation"
+    evidence "selected syntax sites"
+  }
+}
+` };
+  });
 }
 
 /** Hash every compact owner/count record. Rule IDs are map keys, not part of each digest. */
