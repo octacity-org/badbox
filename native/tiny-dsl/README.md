@@ -162,7 +162,9 @@ Findings are grouped under their nearest owning scope:
 group by nearest callable
 ```
 
-`callable` is intentionally semantic. Badbox currently maps it for Rust, Go, PowerShell, and Zig:
+`callable` is intentionally semantic. Closures, lambdas, and nested functions are callables of their
+own, so a site inside one belongs to it rather than to the enclosing function. Badbox maps
+`callable` for these languages:
 
 | Language | Node kinds |
 | --- | --- |
@@ -170,8 +172,25 @@ group by nearest callable
 | Go | `function_declaration`, `method_declaration`, `func_literal` |
 | PowerShell | `function_statement` |
 | Zig | `function_declaration` |
+| TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration`, `function_expression`, `generator_function`, `arrow_function`, `method_definition` |
+| Python | `function_definition`, `lambda` |
+| Java | `method_declaration`, `constructor_declaration`, `compact_constructor_declaration`, `lambda_expression` |
+| C | `function_definition` |
+| C++ | `function_definition`, `lambda_expression` |
+| C# | `method_declaration`, `constructor_declaration`, `destructor_declaration`, `local_function_statement`, `lambda_expression`, `anonymous_method_expression`, `accessor_declaration`, `operator_declaration` |
+| PHP | `function_definition`, `method_declaration`, `anonymous_function`, `arrow_function` |
+| Lua | `function_declaration`, `function_definition` |
+| Kotlin | `function_declaration`, `anonymous_function`, `lambda_literal`, `secondary_constructor` |
+| Swift | `function_declaration`, `init_declaration`, `deinit_declaration`, `lambda_literal` |
+| Dart | `function_declaration`, `method_declaration`, `local_function_declaration`, `getter_declaration`, `setter_declaration`, `function_expression` |
+| Bash | `function_definition` |
+| Ruby | `method`, `singleton_method`, `lambda`, `block`, `do_block` |
 
-For every supported parser language, or whenever exact control is preferable, use raw node kinds:
+Ruby blocks such as `items.each do ... end` are callables, so their sites do not count toward the
+enclosing method. A Ruby `-> { ... }` lambda's body is a `block`, which is therefore its nearest owner.
+
+Other languages reject `callable` with an error. For them, or whenever exact control is preferable,
+use raw node kinds:
 
 ```text
 group by nearest node(function_item, closure_expression)
@@ -253,6 +272,28 @@ multiple-node captures cannot be correlated. Capture values are interned only fo
 and are discarded after evaluation. Other target/relation combinations are rejected rather than
 silently ignored.
 
+A lexical block is one of the language's statement-list nodes:
+
+| Language | Statement lists |
+| --- | --- |
+| Rust, Zig | `block` |
+| Go, PowerShell | `statement_list` |
+| TypeScript, TSX, JavaScript | `statement_block`, `switch_case`, `switch_default` |
+| Python, Lua | `block` |
+| Java | `block`, `constructor_body`, `switch_block_statement_group` |
+| C, C++ | `compound_statement`, `case_statement` |
+| C# | `block`, `switch_section` |
+| PHP | `compound_statement`, `colon_block`, `case_statement`, `default_statement` |
+| Kotlin, Swift | `statements` |
+| Dart | `block`, `switch_statement_case`, `switch_statement_default` |
+| Bash | `compound_statement`, `do_group`, `case_item` |
+| Ruby | `body_statement`, `block_body`, `then`, `else`, `do`, `begin`, `ensure` |
+
+Each switch case is its own list, so statements in different cases never satisfy each other. A body
+without a statement-list node belongs to the statement that contains it. Examples are a braceless
+`if (flag) target();` in C-family languages and Bash `if` bodies. So `prepare(); if (flag) target();`
+satisfies `follows`, while `prepare(); if (flag) { target(); }` does not.
+
 ## Tests and fixtures
 
 Tests live in the DSL and source code lives in external fixture files:
@@ -299,9 +340,10 @@ buffer.
 - The crate parses rules and tests; it does not read files or execute tests. Badbox runs them.
 - Badbox executes `find -> where -> group -> count -> threshold -> report`, including text
   predicates, `match inside`, `match not inside`, `group has/lacks`, and `match follows/precedes`.
-- Statement ordering executes for Rust, Go, PowerShell, and Zig callable groups. Immediate ordering
-  and unsupported target/relation combinations are rejected by the scanner.
-- `callable` has semantic mappings for Rust, Go, PowerShell, and Zig. Other languages use explicit
-  `node(...)` ownership for now.
+- Statement ordering executes for every language with a `callable` mapping. Immediate ordering and
+  unsupported target/relation combinations are rejected by the scanner.
+- `callable` has semantic mappings for Rust, Go, PowerShell, Zig, TypeScript, TSX, JavaScript,
+  Python, Java, C, C++, C#, PHP, Lua, Kotlin, Swift, Dart, Bash, and Ruby. Other languages use
+  explicit `node(...)` ownership.
 - PowerShell code patterns support single-node declared captures; multiple captures are rejected.
 - The DSL is Badbox's only rule format. A `.yaml` rule file passed directly is rejected; rule packs load only `.badbox` files.

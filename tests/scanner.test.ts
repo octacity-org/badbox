@@ -924,3 +924,523 @@ ${ruleBody("c/free-calls", "c", `  find code(pointer) \`void f() { free(pointer)
     await expect(inspect({ paths: [root], rulePaths: [rules] })).rejects.toThrow("no_such_kind");
   });
 });
+
+describe("callable mappings", () => {
+  // Each probe gives every mapped callable kind one target site, then checks ordering against the
+  // same-block, branch, nested-callable, and switch-case boundaries used by Rust, Go, and Zig.
+  const code = (pattern: string) => `code() \`${pattern}\``;
+  const javascriptFamily = {
+    target: code("target()"),
+    prepare: code("prepare()"),
+    callables: {
+      source: `function declared() { target(); }
+function* generated() { target(); }
+const expression = function () { target(); };
+const generator = function* () { target(); };
+const arrow = () => { target(); };
+class Owner { method() { target(); } }
+`,
+      owners: [
+        "function declared() { target(); }",
+        "function* generated() { target(); }",
+        "function () { target(); }",
+        "function* () { target(); }",
+        "() => { target(); }",
+        "method() { target(); }",
+      ],
+    },
+    ordering: {
+      source: `function ordered() { prepare(); target(); }
+function branches(flag) { if (flag) { prepare(); } else { target(); } }
+function nested() { prepare(); const inner = () => { target(); }; inner(); }
+function cases(x) { switch (x) { case 1: prepare(); break; default: target(); } }
+function inCase(x) { switch (x) { case 1: prepare(); target(); } }
+function inDefault(x) { switch (x) { default: prepare(); target(); } }
+`,
+      owners: [
+        "function ordered() { prepare(); target(); }",
+        "function inCase(x) { switch (x) { case 1: prepare(); target(); } }",
+        "function inDefault(x) { switch (x) { default: prepare(); target(); } }",
+      ],
+    },
+  };
+  const probes = [
+    { language: "typescript", extension: "ts", ...javascriptFamily },
+    { language: "tsx", extension: "tsx", ...javascriptFamily },
+    { language: "javascript", extension: "js", ...javascriptFamily },
+    {
+      language: "python",
+      extension: "py",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `def declared():
+    target()
+
+anonymous = lambda: target()
+`,
+        owners: ["def declared():\n    target()", "lambda: target()"],
+      },
+      ordering: {
+        source: `def ordered():
+    prepare()
+    target()
+
+def branches(flag):
+    if flag:
+        prepare()
+    else:
+        target()
+
+def nested():
+    prepare()
+    inner = lambda: target()
+`,
+        owners: ["def ordered():\n    prepare()\n    target()"],
+      },
+    },
+    {
+      language: "java",
+      extension: "java",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `class Owner {
+  Owner() { target(); }
+  void method() { target(); }
+  Runnable lambda = () -> { target(); };
+}
+record Point(int x) { Point { target(); } }
+`,
+        owners: [
+          "Owner() { target(); }",
+          "void method() { target(); }",
+          "() -> { target(); }",
+          "Point { target(); }",
+        ],
+      },
+      ordering: {
+        source: `class Ordering {
+  void ordered() { prepare(); target(); }
+  void branches(boolean flag) { if (flag) { prepare(); } else { target(); } }
+  void nested() { prepare(); Runnable inner = () -> { target(); }; }
+  void cases(int x) { switch (x) { case 1: prepare(); break; default: target(); } }
+  void inCase(int x) { switch (x) { case 1: prepare(); target(); } }
+  Ordering() { prepare(); target(); }
+}
+`,
+        owners: [
+          "void ordered() { prepare(); target(); }",
+          "void inCase(int x) { switch (x) { case 1: prepare(); target(); } }",
+          "Ordering() { prepare(); target(); }",
+        ],
+      },
+    },
+    {
+      language: "c",
+      extension: "c",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: "void declared(void) { target(); }\n",
+        owners: ["void declared(void) { target(); }"],
+      },
+      ordering: {
+        source: `void ordered(void) { prepare(); target(); }
+void branches(int flag) { if (flag) { prepare(); } else { target(); } }
+void cases(int x) { switch (x) { case 1: prepare(); break; default: target(); } }
+void inCase(int x) { switch (x) { case 1: prepare(); target(); } }
+`,
+        owners: [
+          "void ordered(void) { prepare(); target(); }",
+          "void inCase(int x) { switch (x) { case 1: prepare(); target(); } }",
+        ],
+      },
+    },
+    {
+      language: "cpp",
+      extension: "cpp",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `void declared() { target(); }
+struct Owner { void method() { target(); } };
+auto lambda = []() { target(); };
+`,
+        owners: ["void declared() { target(); }", "void method() { target(); }", "[]() { target(); }"],
+      },
+      ordering: {
+        source: `void ordered() { prepare(); target(); }
+void branches(bool flag) { if (flag) { prepare(); } else { target(); } }
+void nested() { prepare(); auto inner = [&]() { target(); }; inner(); }
+void cases(int x) { switch (x) { case 1: prepare(); break; default: target(); } }
+void inCase(int x) { switch (x) { case 1: prepare(); target(); } }
+`,
+        owners: [
+          "void ordered() { prepare(); target(); }",
+          "void inCase(int x) { switch (x) { case 1: prepare(); target(); } }",
+        ],
+      },
+    },
+    {
+      language: "csharp",
+      extension: "cs",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `class Owner {
+  Owner() { target(); }
+  ~Owner() { target(); }
+  void Method() { target(); void Local() { target(); } }
+  Action lambda = () => { target(); };
+  Action anonymous = delegate { target(); };
+  int Property { get { return target(); } }
+  public static Owner operator +(Owner a, Owner b) { return target(); }
+}
+`,
+        owners: [
+          "Owner() { target(); }",
+          "~Owner() { target(); }",
+          "void Method() { target(); void Local() { target(); } }",
+          "void Local() { target(); }",
+          "() => { target(); }",
+          "delegate { target(); }",
+          "get { return target(); }",
+          "public static Owner operator +(Owner a, Owner b) { return target(); }",
+        ],
+      },
+      ordering: {
+        source: `class Ordering {
+  void Ordered() { prepare(); target(); }
+  void Branches(bool flag) { if (flag) { prepare(); } else { target(); } }
+  void Nested() { prepare(); Action inner = () => { target(); }; }
+  void Cases(int x) { switch (x) { case 1: prepare(); break; default: target(); break; } }
+  void InCase(int x) { switch (x) { case 1: prepare(); target(); break; } }
+}
+`,
+        owners: [
+          "void Ordered() { prepare(); target(); }",
+          "void InCase(int x) { switch (x) { case 1: prepare(); target(); break; } }",
+        ],
+      },
+    },
+    {
+      language: "php",
+      extension: "php",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `<?php
+function declared() { target(); }
+class Owner { function method() { target(); } }
+$anonymous = function () { target(); };
+$arrow = fn() => target();
+`,
+        owners: [
+          "function declared() { target(); }",
+          "function method() { target(); }",
+          "function () { target(); }",
+          "fn() => target()",
+        ],
+      },
+      ordering: {
+        source: `<?php
+function ordered() { prepare(); target(); }
+function branches($flag) { if ($flag) { prepare(); } else { target(); } }
+function nested() { prepare(); $inner = function () { target(); }; }
+function cases($x) { switch ($x) { case 1: prepare(); break; default: target(); } }
+function inCase($x) { switch ($x) { case 1: prepare(); target(); } }
+function inDefault($x) { switch ($x) { default: prepare(); target(); } }
+function colon($flag) { if ($flag): prepare(); target(); endif; }
+`,
+        owners: [
+          "function ordered() { prepare(); target(); }",
+          "function inCase($x) { switch ($x) { case 1: prepare(); target(); } }",
+          "function inDefault($x) { switch ($x) { default: prepare(); target(); } }",
+          "function colon($flag) { if ($flag): prepare(); target(); endif; }",
+        ],
+      },
+    },
+    {
+      language: "lua",
+      extension: "lua",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `function declared() target() end
+local anonymous = function() target() end
+`,
+        owners: ["function declared() target() end", "function() target() end"],
+      },
+      ordering: {
+        source: `function ordered() prepare() target() end
+function branches(flag) if flag then prepare() else target() end end
+function nested() prepare() local inner = function() target() end end
+`,
+        owners: ["function ordered() prepare() target() end"],
+      },
+    },
+    {
+      language: "kotlin",
+      extension: "kt",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `fun declared() { target() }
+val anonymous = fun() { target() }
+val lambda = { target() }
+class Owner {
+  constructor(x: Int) { target() }
+}
+`,
+        owners: ["fun declared() { target() }", "fun() { target() }", "{ target() }", "constructor(x: Int) { target() }"],
+      },
+      ordering: {
+        source: `fun ordered() { prepare(); target() }
+fun branches(flag: Boolean) { if (flag) { prepare() } else { target() } }
+fun nested() { prepare(); val inner = { target() } }
+fun cases(x: Int) { when (x) { 1 -> { prepare() } else -> { target() } } }
+fun inCase(x: Int) { when (x) { 1 -> { prepare(); target() } } }
+`,
+        owners: [
+          "fun ordered() { prepare(); target() }",
+          "fun inCase(x: Int) { when (x) { 1 -> { prepare(); target() } } }",
+        ],
+      },
+    },
+    {
+      language: "swift",
+      extension: "swift",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `func declared() { target() }
+let lambda = { target() }
+class Owner {
+  init() { target() }
+  deinit { target() }
+}
+`,
+        owners: ["func declared() { target() }", "{ target() }", "init() { target() }", "deinit { target() }"],
+      },
+      ordering: {
+        source: `func ordered() { prepare(); target() }
+func branches(flag: Bool) { if flag { prepare() } else { target() } }
+func nested() { prepare(); let inner = { target() }; inner() }
+func cases(x: Int) {
+  switch x {
+  case 1: prepare()
+  default: target()
+  }
+}
+func inCase(x: Int) {
+  switch x {
+  case 1:
+    prepare()
+    target()
+  default: break
+  }
+}
+`,
+        owners: [
+          "func ordered() { prepare(); target() }",
+          "func inCase(x: Int) {\n  switch x {\n  case 1:\n    prepare()\n    target()\n  default: break\n  }\n}",
+        ],
+      },
+    },
+    {
+      language: "dart",
+      extension: "dart",
+      // A bare \`target()\` parses as a Dart function signature, so it needs a context.
+      target: "code() `void f() { target(); }` select call_expression",
+      prepare: "code() `void f() { prepare(); }` select call_expression",
+      callables: {
+        source: `void declared() { target(); }
+var anonymous = () { target(); };
+int get topValue { return target(); }
+set topValue(int v) { target(); }
+class Owner {
+  void method() { target(); }
+}
+void outer() { void local() { target(); } }
+`,
+        owners: [
+          "void declared() { target(); }",
+          "() { target(); }",
+          "int get topValue { return target(); }",
+          "set topValue(int v) { target(); }",
+          "void method() { target(); }",
+          "void local() { target(); }",
+        ],
+      },
+      ordering: {
+        source: `void ordered() { prepare(); target(); }
+void branches(bool flag) { if (flag) { prepare(); } else { target(); } }
+void nested() { prepare(); var inner = () { target(); }; }
+void cases(int x) { switch (x) { case 1: prepare(); break; default: target(); } }
+void inCase(int x) { switch (x) { case 1: prepare(); target(); } }
+void inDefault(int x) { switch (x) { default: prepare(); target(); } }
+`,
+        owners: [
+          "void ordered() { prepare(); target(); }",
+          "void inCase(int x) { switch (x) { case 1: prepare(); target(); } }",
+          "void inDefault(int x) { switch (x) { default: prepare(); target(); } }",
+        ],
+      },
+    },
+    {
+      language: "bash",
+      extension: "sh",
+      target: code("target"),
+      prepare: code("prepare"),
+      callables: {
+        source: "declared() { target; }\n",
+        owners: ["declared() { target; }"],
+      },
+      ordering: {
+        source: `ordered() { prepare; target; }
+branches() { if flag; then prepare; else target; fi; }
+looped() { for x in y; do prepare; target; done; }
+cases() { case x in a) prepare;; b) target;; esac; }
+inCase() { case x in a) prepare; target;; esac; }
+`,
+        owners: [
+          "ordered() { prepare; target; }",
+          "looped() { for x in y; do prepare; target; done; }",
+          "inCase() { case x in a) prepare; target;; esac; }",
+        ],
+      },
+    },
+    {
+      language: "ruby",
+      extension: "rb",
+      target: code("target()"),
+      prepare: code("prepare()"),
+      callables: {
+        source: `def declared
+  target()
+end
+def self.singleton
+  target()
+end
+items.each do |x| target() end
+items.map { |x| target() }
+`,
+        owners: [
+          "def declared\n  target()\nend",
+          "def self.singleton\n  target()\nend",
+          "do |x| target() end",
+          "{ |x| target() }",
+        ],
+      },
+      ordering: {
+        source: `def ordered
+  prepare()
+  target()
+end
+def branches(flag)
+  if flag
+    prepare()
+  else
+    target()
+  end
+end
+def nested
+  prepare()
+  items.each { target() }
+end
+def cases(x)
+  case x
+  when 1
+    prepare()
+  else
+    target()
+  end
+end
+def in_branch(flag)
+  if flag
+    prepare()
+    target()
+  end
+end
+def in_loop
+  while running
+    prepare()
+    target()
+  end
+end
+def in_begin
+  begin
+    prepare()
+    target()
+  end
+end
+def in_ensure
+  work()
+ensure
+  prepare()
+  target()
+end
+`,
+        owners: [
+          "def ordered\n  prepare()\n  target()\nend",
+          "def in_branch(flag)\n  if flag\n    prepare()\n    target()\n  end\nend",
+          "def in_loop\n  while running\n    prepare()\n    target()\n  end\nend",
+          "def in_begin\n  begin\n    prepare()\n    target()\n  end\nend",
+          "def in_ensure\n  work()\nensure\n  prepare()\n  target()\nend",
+        ],
+      },
+    },
+  ];
+  const rule = (language: string, target: string, clause = "") => `#badbox 1
+rule ${language}/probe for ${language} {
+  summary "probe"
+  find ${target}
+  group by nearest callable
+${clause}
+  when count > 0
+  report {
+    severity info
+    message "probe"
+    evidence "probe sites"
+  }
+}
+`;
+  const owners = async (language: string, extension: string, name: string, source: string, rules: string) => {
+    const root = await temporaryRoot();
+    const path = join(root, `${name}.${extension}`);
+    const rulePath = join(root, `${name}.badbox`);
+    await Bun.write(path, source);
+    await Bun.write(rulePath, rules);
+    const result = await inspect({ paths: [path], rulePaths: [rulePath] });
+    return [
+      language,
+      result.diagnostics,
+      await Promise.all(records(result).map(async (finding) => [await ownerText(finding), finding.observed])),
+    ];
+  };
+  const once = (texts: string[]) => texts.map((text) => [text, 1]);
+
+  test("group every mapped callable kind under its own owner", async () => {
+    for (const probe of probes) {
+      expect(await owners(probe.language, probe.extension, "callables", probe.callables.source,
+        rule(probe.language, probe.target))).toEqual([probe.language, [], once(probe.callables.owners)]);
+    }
+  });
+
+  test("order statements only within one callable and statement list", async () => {
+    for (const probe of probes) {
+      const clause = `  where match follows any { ${probe.prepare} }`;
+      expect(await owners(probe.language, probe.extension, "ordering", probe.ordering.source,
+        rule(probe.language, probe.target, clause))).toEqual([probe.language, [], once(probe.ordering.owners)]);
+    }
+  });
+
+  test("languages without a callable mapping still reject callable grouping", async () => {
+    const root = await temporaryRoot();
+    const rulePath = join(root, "scala.badbox");
+    await Bun.write(rulePath, rule("scala", code("target()")));
+    await expect(inspect({ paths: [root], rulePaths: [rulePath] }))
+      .rejects.toThrow("callable grouping, which is not mapped for scala");
+  });
+});

@@ -1052,10 +1052,37 @@ fn same_range(left: ByteRange, right: ByteRange) -> bool {
     left.start == right.start && left.end == right.end
 }
 
+/// Statement-list nodes per language. Switch cases are lists of their own so that statements in
+/// different cases never order against each other.
 fn sequence_container_kinds(language: Language) -> Option<&'static [&'static str]> {
     match language {
         Language::Rust | Language::Zig => Some(&["block"]),
         Language::Go | Language::PowerShell => Some(&["statement_list"]),
+        Language::TypeScript | Language::Tsx | Language::JavaScript => {
+            Some(&["statement_block", "switch_case", "switch_default"])
+        }
+        Language::Python | Language::Lua => Some(&["block"]),
+        Language::Java => Some(&["block", "constructor_body", "switch_block_statement_group"]),
+        Language::C | Language::Cpp => Some(&["compound_statement", "case_statement"]),
+        Language::CSharp => Some(&["block", "switch_section"]),
+        Language::Php => Some(&[
+            "compound_statement",
+            "colon_block",
+            "case_statement",
+            "default_statement",
+        ]),
+        Language::Kotlin | Language::Swift => Some(&["statements"]),
+        Language::Dart => Some(&["block", "switch_statement_case", "switch_statement_default"]),
+        Language::Bash => Some(&["compound_statement", "do_group", "case_item"]),
+        Language::Ruby => Some(&[
+            "body_statement",
+            "block_body",
+            "then",
+            "else",
+            "do",
+            "begin",
+            "ensure",
+        ]),
         _ => None,
     }
 }
