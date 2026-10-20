@@ -185,6 +185,21 @@ Repeating `statement` in both selectors requires the captured source text to be 
 statements are allowed; nested callables and different branch, loop, switch, or error-handling
 blocks remain separate.
 
+`not follows` and `not precedes` keep matches without such a statement, for example a lock with no
+later unlock of the same receiver in the same block:
+
+```text
+find code(mutex) `mutex.lock()`
+group by nearest callable
+
+where match not precedes any {
+  code(mutex) `mutex.unlock()`
+}
+```
+
+Messages can include the observed count and parameter values:
+`message "Callable has {count} clone calls (limit {limit})"`.
+
 See the [tiny DSL reference](native/tiny-dsl/README.md) for the complete grammar, validation rules,
 relations, parameters, and fixture declarations. Runnable DSL examples live under
 [`examples/rules`](examples/rules); they are never loaded automatically.
@@ -198,11 +213,13 @@ relations, parameters, and fixture declarations. Runnable DSL examples live unde
 | Capture predicates | `==`, `!=`, `in`, `not in`, and Rust-regex `matches` |
 | Containment | `where match inside any\|all` and `where match not inside any\|all` |
 | Owner evidence | `where group has any\|all` and `where group lacks any\|all` |
-| Ordering | Statement-level `follows` and `precedes` within one callable and lexical block |
+| Ordering | Statement-level `follows`, `precedes`, `not follows`, and `not precedes` within one callable and lexical block |
 | Aggregation | Distinct selected ranges counted per owner with strict `count > threshold` |
-| Parameters | Rule-local scalar defaults with programmatic overrides; integers feed `count`, strings feed text conditions |
+| Parameters | Rule-local scalar defaults with CLI and programmatic overrides; integers feed `count`, strings feed text conditions, and all can appear in messages |
+| Suppressions | `badbox-ignore <rule-id>` comments on the line above an owner, counted in the output |
+| New findings only | `--baseline-ref <ref>` hides findings that a git commit already has |
 | Rule format | Tiny DSL, compiled to the Badbox Rule IR |
-| Output | Deterministically ordered, bounded findings with exact total counts |
+| Output | Deterministically ordered, bounded findings with exact total counts, line/column positions, byte offsets, and JSON |
 
 ## Supported languages
 
@@ -221,7 +238,8 @@ dependency, build-configuration, or semantic type detection.
 
 ```text
 badbox create <name.badbox>
-badbox check [path ...]
+badbox check [path ...] [--rules <path>]... [--param <rule.name=value>]...
+             [--max-findings <n>] [--json] [--baseline-ref <ref>]
 badbox test
 ```
 
@@ -239,6 +257,40 @@ discovery but do not change where rules are loaded from.
 
 Discovery respects ignore files and hidden paths, skips common build and vendor directories, and
 does not follow nested symlinks.
+
+Each finding prints as `file:startLine:startColumn-endLine:endColumn`. Lines and columns are
+1-based, columns count Unicode code points, and the end column is exclusive.
+
+| Flag | Effect |
+| --- | --- |
+| `--rules <path>` | Load these rule files or directories instead of `.badbox/`. Repeatable. |
+| `--param <rule.name=value>` | Override a rule parameter, such as `rust/excessive-clones.limit=4`. Digits are integers, `true`/`false` are booleans, and anything else is a string. Quote the value, as in `x/y.name="42"`, to force a string. Repeatable. |
+| `--max-findings <n>` | Return at most `n` findings. The total count stays exact. The default is 10,000. |
+| `--json` | Print one JSON document with findings, positions, byte offsets, counts, and diagnostics. |
+| `--baseline-ref <ref>` | Report only findings that the git commit `ref` does not have. |
+
+#### Suppressions
+
+A `badbox-ignore` comment on the line directly above an owner's first line suppresses the listed
+rules for that owner:
+
+```rust
+// badbox-ignore rust/excessive-clones
+fn build_request() { /* ... */ }
+```
+
+List several rule IDs separated by spaces or commas. A comment without a rule ID suppresses
+nothing. Badbox matches the marker in the source text, not only in comment nodes. Suppressed
+findings are not reported, but the summary line and JSON `suppressedCount` count them.
+
+#### Baseline
+
+`--baseline-ref main` checks the same paths in a temporary `git worktree` of `main`, using the
+current rules, and hides findings that already exist there. A finding already exists when the ref
+has a finding of the same rule, in the same repository-relative file, whose owner has identical
+source text. Moving code keeps a finding hidden; editing the owner, renaming its file, or changing
+the rule's parameters shows it again. The ref must exist locally, so shallow CI clones need enough
+history. Both checks collect every finding before the `--max-findings` limit applies.
 
 ### `test`
 
@@ -279,8 +331,11 @@ for (const finding of iterateFindings(result)) {
   console.log({
     rule: finding.rule.id,
     file: finding.file,
+    line: finding.startLine,
+    column: finding.startColumn,
     owner: [finding.ownerStart, finding.ownerEnd],
     observed: finding.observed,
+    message: finding.message,
   });
 }
 
@@ -298,9 +353,11 @@ if (result.diagnostics.length > 0) {
 - `profile: true` to include phase timings and cache/execution counters;
 - `maxFindings` to bound returned records while retaining the exact `findingCount`.
 
-Findings are stored as five `u32` values: file ID, rule ID, owner start, owner end, and observed
-count. File paths and rule metadata are interned separately. Use `iterateFindings()` to decode the
-records without materializing another result array.
+Findings are stored as nine `u32` values: file ID, rule ID, owner start and end byte offsets,
+observed count, start line, start column, end line, and end column. File paths and rule metadata are
+interned separately. Use `iterateFindings()` to decode the records without materializing another
+result array; it also renders each finding's `message`. `suppressedCount` reports findings removed by
+`badbox-ignore` comments.
 
 ## Architecture
 
@@ -337,7 +394,7 @@ output remains deterministic.
 - There is no type resolution, macro expansion, conditional-compilation filtering, SQL query-plan
   analysis, leak proof, or transaction-atomicity proof.
 - Counts describe syntax sites, not runtime execution counts or costs.
-- Immediate-sibling ordering is not implemented. `follows` and `precedes` allow intervening sibling
+- Immediate-sibling ordering is not implemented. Ordering relations allow intervening sibling
   statements.
 - Ordering by nearest callable is available only for languages with a `callable` mapping. A body
   without its own statement-list node, such as a braceless `if (flag) target();`, belongs to the
@@ -346,8 +403,9 @@ output remains deterministic.
 - Syntax-error files and source files that are not UTF-8 produce diagnostics and no partial
   findings.
 - Caches do not survive a CLI process and still read file contents for validation.
-- Findings are bounded to 10,000 records by default. Increasing `maxFindings` adds 20 bytes per
-  returned finding.
+- Findings are bounded to 10,000 records by default. Increasing `maxFindings` adds 36 bytes per
+  returned finding. `--baseline-ref` collects every finding on both sides before applying the
+  limit.
 - Rule format version `1` remains experimental.
 
 ## Development

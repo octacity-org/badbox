@@ -1,10 +1,12 @@
 import { iterateFindings, type CheckResult } from "../scanner/index.ts";
+import type { Baseline } from "../baseline.ts";
 
-export function reportCheck(result: CheckResult): void {
+export function reportCheck(result: CheckResult, baseline?: Baseline): void {
   for (const finding of iterateFindings(result)) {
-    console.log(`${finding.file}:${finding.ownerStart}-${finding.ownerEnd} ` +
+    console.log(`${finding.file}:${finding.startLine}:${finding.startColumn}-` +
+      `${finding.endLine}:${finding.endColumn} ` +
       `[${finding.rule.severity}] ${finding.rule.id}: ` +
-      `${finding.rule.message} ` +
+      `${finding.message} ` +
       `(${finding.observed} > ${finding.rule.threshold} ${finding.rule.evidenceSubject})`);
   }
   for (const diagnostic of result.diagnostics) {
@@ -12,6 +14,7 @@ export function reportCheck(result: CheckResult): void {
   }
   const returnedCount = result.findings.length / result.recordWidth;
   const returned = result.truncated ? ` (${returnedCount} returned)` : "";
-  console.log(`${result.checkedFiles} files checked, ${result.findingCount} findings${returned}, ` +
-    `${result.diagnostics.length} diagnostics`);
+  const hidden = baseline ? `, ${baseline.hiddenCount} also at ${baseline.ref}` : "";
+  console.log(`${result.checkedFiles} files checked, ${result.findingCount} findings${returned}${hidden}, ` +
+    `${result.suppressedCount} suppressed, ${result.diagnostics.length} diagnostics`);
 }

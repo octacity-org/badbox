@@ -541,7 +541,7 @@ impl StructuralBackend for AstGrepBackend {
                         "rule {} has inconsistent relational capture metadata",
                         rule.id
                     );
-                    if matches!(relation, Relation::Follows | Relation::Precedes) {
+                    if relation.is_ordering() {
                         ensure!(
                             sequence_container_kinds(rule.language).is_some(),
                             "rule {} uses follows or precedes, which is not mapped for {:?} yet",
@@ -629,8 +629,7 @@ impl StructuralBackend for AstGrepBackend {
                     .iter()
                     .enumerate()
                     .map(|(relation_index, relation)| {
-                        let ordering =
-                            matches!(relation.relation, Relation::Follows | Relation::Precedes);
+                        let ordering = relation.relation.is_ordering();
                         rules_need_sequence[rule_index] |= ordering;
                         rules_need_correlation[rule_index] |= relation
                             .shared_captures
@@ -930,7 +929,7 @@ fn relations_match(
         .iter()
         .enumerate()
         .all(|(index, relation)| match relation.relation {
-            Relation::Follows | Relation::Precedes => ordering_relation_matches(
+            ordering if ordering.is_ordering() => ordering_relation_matches(
                 relation,
                 candidate,
                 &ordering_facts[index],
@@ -969,8 +968,13 @@ fn ordering_relation_matches(
     selections: &[Vec<OrderingFact>],
     correlation_offset: usize,
 ) -> bool {
+    let negated = matches!(
+        relation.relation,
+        Relation::NotFollows | Relation::NotPrecedes
+    );
+    // A match outside any statement list has nothing before or after it.
     let Some(primary) = candidate.sequence else {
-        return false;
+        return negated;
     };
     let selection_matches = |(selection_index, facts): (usize, &Vec<OrderingFact>)| {
         facts.iter().any(|fact| {
@@ -986,17 +990,22 @@ fn ordering_relation_matches(
                 && same_range(fact.sequence.block, primary.block)
                 && captures_match
                 && match relation.relation {
-                    Relation::Follows => fact.sequence.statement.end <= primary.statement.start,
-                    Relation::Precedes => fact.sequence.statement.start >= primary.statement.end,
+                    Relation::Follows | Relation::NotFollows => {
+                        fact.sequence.statement.end <= primary.statement.start
+                    }
+                    Relation::Precedes | Relation::NotPrecedes => {
+                        fact.sequence.statement.start >= primary.statement.end
+                    }
                     _ => unreachable!("only ordering relations use ordering facts"),
                 }
         })
     };
-    if relation.require_all {
+    let matched = if relation.require_all {
         selections.iter().enumerate().all(selection_matches)
     } else {
         selections.iter().enumerate().any(selection_matches)
-    }
+    };
+    matched != negated
 }
 
 fn relation_matches(
@@ -1024,7 +1033,7 @@ fn relation_matches(
     match relation.relation {
         Relation::Has | Relation::Inside => matched,
         Relation::Lacks | Relation::NotInside => !matched,
-        Relation::Follows | Relation::Precedes => {
+        Relation::Follows | Relation::Precedes | Relation::NotFollows | Relation::NotPrecedes => {
             unreachable!("ordering relations use statement contexts")
         }
     }
@@ -1204,7 +1213,7 @@ function Example {
             language: Language::PowerShell,
             summary: "test".to_owned(),
             severity: crate::model::Severity::Info,
-            message: "test".to_owned(),
+            message: vec![crate::rule_ir::MessagePart::Text("test".to_owned())],
             parameters: Default::default(),
             threshold_parameter: None,
             selection: StructuralSelection::Pattern(

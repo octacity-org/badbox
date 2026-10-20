@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
 pub const DEFAULT_MAX_FINDINGS: u32 = 10_000;
-pub const FINDING_RECORD_WIDTH: u32 = 5;
+pub const FINDING_RECORD_WIDTH: u32 = 9;
 
 fn default_max_findings() -> u32 {
     DEFAULT_MAX_FINDINGS
@@ -191,6 +191,13 @@ pub struct OwnedMatch {
     pub range: ByteRange,
 }
 
+/// A 1-based line and 1-based Unicode code-point column.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Position {
+    pub line: u32,
+    pub column: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CompactFinding {
     pub file_id: u32,
@@ -198,6 +205,9 @@ pub struct CompactFinding {
     pub owner_start: u32,
     pub owner_end: u32,
     pub observed: u32,
+    /// Filled from the source after evaluation; the end column is exclusive.
+    pub start: Position,
+    pub end: Position,
 }
 
 impl CompactFinding {
@@ -208,6 +218,10 @@ impl CompactFinding {
             self.owner_start,
             self.owner_end,
             self.observed,
+            self.start.line,
+            self.start.column,
+            self.end.line,
+            self.end.column,
         ]);
     }
 }
@@ -239,6 +253,8 @@ pub struct ScanMetadata {
     pub rules: Vec<RuleMetadata>,
     pub checked_files: usize,
     pub finding_count: usize,
+    /// Findings above threshold that inline `badbox-ignore` comments removed.
+    pub suppressed_count: usize,
     pub truncated: bool,
     pub diagnostics: Vec<Diagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]

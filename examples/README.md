@@ -50,13 +50,14 @@ illustrative.
 ## Results
 
 `inspect()` returns `languages`, interned `files` and `rules` tables,
-`checkedFiles`, `findingCount`, compact `findings`, `truncated`, and
-`diagnostics`.
+`checkedFiles`, `findingCount`, `suppressedCount`, compact `findings`,
+`truncated`, and `diagnostics`.
 `languages` lists supported languages discovered, even if no loaded rule targets
 one. `checkedFiles` counts error-free files actually analyzed with relevant rules.
 
-`findings` is a flat `Uint32Array` with a record width of five:
-`fileId`, `ruleId`, `ownerStart`, `ownerEnd`, and exact `observed` count. File
+`findings` is a flat `Uint32Array` with a record width of nine:
+`fileId`, `ruleId`, `ownerStart`, `ownerEnd`, exact `observed` count,
+`startLine`, `startColumn`, `endLine`, and `endColumn`. File
 paths occur once in `files`; IDs, thresholds, severity, messages, language, and
 evidence labels occur once in `rules`. By default, at most 10,000 records are
 returned. `maxFindings` can lower or raise that budget, and zero provides a
@@ -64,8 +65,8 @@ count-only result. `truncated` reports omitted records while `findingCount`
 remains exact.
 
 Owner offsets are zero-based UTF-8 bytes and end-exclusive. They are not
-JavaScript UTF-16 string indices. Line/column presentation is intentionally not
-materialized in the check result.
+JavaScript UTF-16 string indices. Lines and columns are 1-based, columns count
+Unicode code points, and the end column is exclusive.
 
 Files and returned findings are sorted deterministically; repeated/overlapping input
 paths do not duplicate files. Syntax-error files generate a diagnostic and no

@@ -66,16 +66,26 @@ export function* iterateFindings(result: CheckResult): IterableIterator<FindingR
     const file = result.files[fileId];
     const rule = result.rules[ruleId];
     if (file === undefined || rule === undefined) throw new Error("invalid native finding table index");
+    const observed = result.findings[offset + findingRecord.observed]!;
     yield {
       fileId,
       ruleId,
       file,
       rule,
+      message: renderMessage(rule.message, observed),
       ownerStart: result.findings[offset + findingRecord.ownerStart]!,
       ownerEnd: result.findings[offset + findingRecord.ownerEnd]!,
-      observed: result.findings[offset + findingRecord.observed]!,
+      observed,
+      startLine: result.findings[offset + findingRecord.startLine]!,
+      startColumn: result.findings[offset + findingRecord.startColumn]!,
+      endLine: result.findings[offset + findingRecord.endLine]!,
+      endColumn: result.findings[offset + findingRecord.endColumn]!,
     };
   }
+}
+
+function renderMessage(template: string, observed: number): string {
+  return template.replace(/\{\{|\}\}|\{count\}/g, (token) => token === "{count}" ? String(observed) : token[0]!);
 }
 
 export interface CheckOptions {

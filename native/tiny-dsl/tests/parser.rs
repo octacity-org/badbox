@@ -258,8 +258,35 @@ fn parses_negated_match_containment() {
     let error = parse(&rule_with(
         "  find node call_expression\n  where group not has any { node loop_expression }",
     ))
-    .expect_err("only inside can be negated");
-    assert!(error.to_string().contains("expected inside after not"), "{error}");
+    .expect_err("has cannot be negated");
+    assert!(
+        error
+            .to_string()
+            .contains("expected inside, follows, or precedes after not"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parses_negated_ordering() {
+    for (text, relation) in [
+        ("not follows", Relation::NotFollows),
+        ("not precedes", Relation::NotPrecedes),
+    ] {
+        let document = parse(&rule_with(&format!(
+            "  find code(value) `value.lock()`\n  where match {text} all {{ node return_expression }}"
+        )))
+        .expect("document parses");
+        assert_eq!(
+            document.rules[0].where_clauses[0],
+            WhereClause::Relation {
+                target: RelationTarget::Match,
+                relation,
+                require_all: true,
+                selections: vec![Selection::Node("return_expression".into())],
+            }
+        );
+    }
 }
 
 #[test]

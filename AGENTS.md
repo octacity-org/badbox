@@ -23,6 +23,13 @@ rewriting or LLM reasoning to the native engine.
   header and an editable example. It must not overwrite an existing file.
 - `badbox test` runs DSL `test` fixtures from `.badbox/` against their own rule. Failed tests,
   invalid rules, and an empty test set produce a nonzero exit. `count` requires `findings 1`.
+- `badbox check` accepts `--rules`, `--param`, `--max-findings`, `--json`, and `--baseline-ref`.
+  Text output prints `file:startLine:startColumn-endLine:endColumn`; JSON and the API also keep
+  byte offsets. `--baseline-ref` checks a temporary git worktree of the ref with the current rules
+  and hides findings with the same rule, repository-relative file, and owner source text.
+- A `badbox-ignore <rule-id>...` comment on the line directly above an owner's first line suppresses
+  those rules for that owner. Suppressed findings are counted in `suppressedCount`, never dropped
+  silently.
 - Findings do not make the CLI fail. Invalid rules, invalid input, I/O errors, or syntax diagnostics
   make the check incomplete and produce a nonzero exit.
 - The tiny DSL is the only rule format and compiles to the Badbox-owned Rule IR. YAML rules were
@@ -77,12 +84,15 @@ this split when extending execution; do not reintroduce per-rule tree scans.
 - `src/scanner/native.ts` — development addon and platform-package loading.
 - `src/scanner/types.ts` — public result and profiling types.
 - `src/reporters/terminal.ts` — human-readable CLI output.
+- `src/reporters/json.ts` — `check --json` output.
+- `src/baseline.ts` — `check --baseline-ref` git worktree comparison.
 - `native/src/lib.rs` — N-API entrypoint, rule loading, planning, discovery, caches, parallel file
   execution, and compact result assembly.
 - `native/src/rule_ir.rs` — engine-owned rule model.
 - `native/src/frontends/dsl.rs` — tiny-DSL-to-IR lowering and validation.
 - `native/src/backend/ast_grep.rs` — parser registry, compiled selectors, shared finder planning,
   structural matching, ownership, and relational fact collection.
+- `native/src/source_text.rs` — line/column positions and `badbox-ignore` comment parsing.
 - `native/src/evaluator.rs` — language-independent aggregation and finding construction.
 - `native/tiny-dsl/` — standalone Rust parser crate and authoritative DSL reference.
 - `examples/rules/` — runnable examples, never defaults.
@@ -113,8 +123,9 @@ The DSL currently supports:
 - `where match inside any|all { ... }` and `where match not inside any|all { ... }`;
 - `where group has any|all { ... }`;
 - `where group lacks any|all { ... }`;
-- `where match follows any|all { ... }` and `where match precedes any|all { ... }` for callable
-  groups in those languages;
+- `where match follows any|all { ... }`, `where match precedes any|all { ... }`, and their
+  `not follows` / `not precedes` negations for callable groups in those languages;
+- `{count}` and `{parameter}` placeholders in report messages;
 - strictly greater-than count thresholds and scalar parameter overrides.
 
 Ordering is statement-level within the same nearest callable and lexical block; intervening
@@ -134,8 +145,9 @@ type detection.
 - Owners are byte ranges. Preserve exact offsets, including equal-looking owners at different
   positions.
 - Counts deduplicate selected ranges within an owner.
-- Compact findings are five `u32` values: file ID, rule ID, owner start, owner end, and observed
-  count. Paths and rule metadata are interned separately.
+- Compact findings are nine `u32` values: file ID, rule ID, owner start, owner end, observed count,
+  start line, start column, end line, and end column. Lines and columns are 1-based, columns count
+  code points, and the end column is exclusive. Paths and rule metadata are interned separately.
 - Normal output is bounded by `maxFindings`, while exact total finding and observed counts remain
   available.
 - File concurrency is bounded. Rule, parse, and compact result caches are process-local,

@@ -115,6 +115,8 @@ pub enum Relation {
     NotInside,
     Follows,
     Precedes,
+    NotFollows,
+    NotPrecedes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -482,10 +484,15 @@ impl Parser {
             "lacks" => Relation::Lacks,
             "inside" => Relation::Inside,
             "not" => {
-                if !self.take_keyword("inside") {
-                    return Err(self.error("expected inside after not"));
+                if self.take_keyword("inside") {
+                    Relation::NotInside
+                } else if self.take_keyword("follows") {
+                    Relation::NotFollows
+                } else if self.take_keyword("precedes") {
+                    Relation::NotPrecedes
+                } else {
+                    return Err(self.error("expected inside, follows, or precedes after not"));
                 }
-                Relation::NotInside
             }
             "follows" => Relation::Follows,
             "precedes" => Relation::Precedes,

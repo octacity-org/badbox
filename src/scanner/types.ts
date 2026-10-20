@@ -31,7 +31,7 @@ export type CheckLanguage =
   | "zig";
 export type CheckSeverity = "info" | "warning" | "error";
 
-export const findingRecordWidth = 5;
+export const findingRecordWidth = 9;
 
 export const findingRecord = {
   fileId: 0,
@@ -39,12 +39,17 @@ export const findingRecord = {
   ownerStart: 2,
   ownerEnd: 3,
   observed: 4,
+  startLine: 5,
+  startColumn: 6,
+  endLine: 7,
+  endColumn: 8,
 } as const;
 
 export interface RuleMetadata {
   readonly id: string;
   readonly language: CheckLanguage;
   readonly summary: string;
+  /** Template with parameters rendered; `{count}` is the observed count, `{{`/`}}` are braces. */
   readonly message: string;
   readonly severity: CheckSeverity;
   readonly threshold: number;
@@ -96,7 +101,13 @@ export interface CheckResult {
   readonly rules: readonly RuleMetadata[];
   readonly checkedFiles: number;
   readonly findingCount: number;
-  /** Flat records: fileId, ruleId, ownerStart, ownerEnd, observed. */
+  /** Findings above threshold that inline `badbox-ignore` comments removed; not in findingCount. */
+  readonly suppressedCount: number;
+  /**
+   * Flat records: fileId, ruleId, ownerStart, ownerEnd, observed, startLine, startColumn, endLine,
+   * endColumn. Offsets are UTF-8 bytes; lines and columns are 1-based, columns count Unicode code
+   * points, and the end column is exclusive.
+   */
   readonly findings: Uint32Array;
   readonly truncated: boolean;
   readonly diagnostics: readonly { readonly file: string; readonly message: string }[];
@@ -108,9 +119,15 @@ export interface FindingRecord {
   readonly ruleId: number;
   readonly file: string;
   readonly rule: RuleMetadata;
+  /** The rule message rendered for this finding. */
+  readonly message: string;
   readonly ownerStart: number;
   readonly ownerEnd: number;
   readonly observed: number;
+  readonly startLine: number;
+  readonly startColumn: number;
+  readonly endLine: number;
+  readonly endColumn: number;
 }
 
 export interface RuleTestOptions {

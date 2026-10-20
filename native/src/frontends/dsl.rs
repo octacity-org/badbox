@@ -3,8 +3,8 @@
 use crate::{
     model::{Language, Severity},
     rule_ir::{
-        Aggregation, Condition, Evidence, ParameterValue, Relation, RelationTarget, Rule, RuleTest,
-        Scope, StructuralSelection, TextOperator, TextValue, Threshold,
+        Aggregation, Condition, Evidence, MessagePart, ParameterValue, Relation, RelationTarget,
+        Rule, RuleTest, Scope, StructuralSelection, TextOperator, TextValue, Threshold,
     },
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -42,13 +42,7 @@ fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {
     let language = language(&rule.language)?;
     let conditions = lower_conditions(&rule.selection, &rule.where_clauses, language, &rule.id)?;
     if conditions.iter().any(|condition| {
-        matches!(
-            condition,
-            Condition::Relation {
-                relation: Relation::Follows | Relation::Precedes,
-                ..
-            }
-        )
+        matches!(condition, Condition::Relation { relation, .. } if relation.is_ordering())
     }) {
         ensure!(
             matches!(rule.group, Group::Callable),
@@ -98,6 +92,7 @@ fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {
             .collect(),
         Group::Node(kinds) => kinds,
     };
+    let message = message_template(&rule.report.message, &rule.parameters, &rule.id)?;
     Ok(Rule {
         id: rule.id,
         language,
@@ -107,7 +102,7 @@ fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {
             tiny_dsl::Severity::Warning => Severity::Warning,
             tiny_dsl::Severity::Error => Severity::Error,
         },
-        message: rule.report.message,
+        message,
         parameters,
         threshold_parameter,
         selection,
@@ -119,6 +114,62 @@ fn lower_rule(rule: tiny_dsl::Rule) -> Result<Rule> {
             subject: rule.report.evidence,
         },
     })
+}
+
+/// Split `{count}` and `{parameter}` placeholders out of a message; `{{` and `}}` are literal braces.
+fn message_template(
+    message: &str,
+    parameters: &[tiny_dsl::Parameter],
+    rule_id: &str,
+) -> Result<Vec<MessagePart>> {
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    let mut characters = message.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '{' if characters.next_if_eq(&'{').is_some() => text.push('{'),
+            '}' if characters.next_if_eq(&'}').is_some() => text.push('}'),
+            '{' => {
+                let mut name = String::new();
+                loop {
+                    match characters.next() {
+                        Some('}') => break,
+                        Some(character) if character != '{' => name.push(character),
+                        _ => bail!(
+                            "rule {rule_id} message has an unclosed {{; write {{{{ for a literal brace"
+                        ),
+                    }
+                }
+                if !text.is_empty() {
+                    parts.push(MessagePart::Text(std::mem::take(&mut text)));
+                }
+                let declared = parameters.iter().any(|parameter| parameter.name == name);
+                if name == "count" {
+                    ensure!(
+                        !declared,
+                        "rule {rule_id} message placeholder {{count}} is ambiguous because a \
+                         parameter is also named count"
+                    );
+                    parts.push(MessagePart::Count);
+                } else if declared {
+                    parts.push(MessagePart::Parameter(name));
+                } else {
+                    bail!(
+                        "rule {rule_id} message uses unknown placeholder {{{name}}}; \
+                         use {{count}} or a declared parameter"
+                    );
+                }
+            }
+            '}' => {
+                bail!("rule {rule_id} message has an unmatched }}; write }}}} for a literal brace")
+            }
+            character => text.push(character),
+        }
+    }
+    if !text.is_empty() {
+        parts.push(MessagePart::Text(text));
+    }
+    Ok(parts)
 }
 
 fn lower_selection(selection: &Selection, language: Language) -> Result<StructuralSelection> {
@@ -209,6 +260,8 @@ fn lower_conditions(
                     tiny_dsl::Relation::NotInside => Relation::NotInside,
                     tiny_dsl::Relation::Follows => Relation::Follows,
                     tiny_dsl::Relation::Precedes => Relation::Precedes,
+                    tiny_dsl::Relation::NotFollows => Relation::NotFollows,
+                    tiny_dsl::Relation::NotPrecedes => Relation::NotPrecedes,
                 };
                 ensure!(
                     matches!(
@@ -216,15 +269,11 @@ fn lower_conditions(
                         (
                             RelationTarget::Match,
                             Relation::Inside | Relation::NotInside
-                        ) | (
-                            RelationTarget::Match,
-                            Relation::Follows | Relation::Precedes
                         ) | (RelationTarget::Group, Relation::Has | Relation::Lacks)
-                    ),
+                    ) || (target == RelationTarget::Match && relation.is_ordering()),
                     "rule {rule_id} uses a relational condition that does not execute yet"
                 );
-                let shared_captures = if matches!(relation, Relation::Follows | Relation::Precedes)
-                {
+                let shared_captures = if relation.is_ordering() {
                     selections
                         .iter()
                         .map(|selection| shared_capture_names(primary_captures, selection, rule_id))
@@ -662,6 +711,87 @@ rule rust/guarded for rust {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn messages_lower_count_and_parameter_placeholders() {
+        let rule = |parameters: &str, message: &str| {
+            format!(
+                r#"#badbox 1
+rule rust/messages for rust {{
+  summary "messages"
+  {parameters}
+  find code(value) `value.clone()`
+  group by nearest callable
+  when count > 0
+  report {{
+    severity info
+    message "{message}"
+    evidence "clone calls"
+  }}
+}}
+"#
+            )
+        };
+        let rules = compile(&rule(
+            "param limit = 2",
+            "{count} clones, limit {limit}, braces {{x}}",
+        ))
+        .expect("placeholders lower");
+        assert_eq!(
+            rules[0].message,
+            [
+                MessagePart::Count,
+                MessagePart::Text(" clones, limit ".to_owned()),
+                MessagePart::Parameter("limit".to_owned()),
+                MessagePart::Text(", braces {x}".to_owned()),
+            ]
+        );
+        for (parameters, message, expected) in [
+            ("", "{limit}", "unknown placeholder {limit}"),
+            ("", "open {count", "unclosed {"),
+            ("", "close }", "unmatched }"),
+            ("param count = 1", "{count}", "ambiguous"),
+        ] {
+            let error = compile(&rule(parameters, message)).expect_err(message);
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn negated_ordering_relations_lower_for_callable_groups() {
+        for (text, expected) in [
+            ("not follows", Relation::NotFollows),
+            ("not precedes", Relation::NotPrecedes),
+        ] {
+            let rules = compile(&format!(
+                r#"#badbox 1
+rule rust/unreleased for rust {{
+  summary "unreleased"
+  find code(value) `value.lock()`
+  group by nearest callable
+  where match {text} all {{ code(value) `drop(value)` }}
+  when count > 0
+  report {{
+    severity info
+    message "unreleased"
+    evidence "lock calls"
+  }}
+}}
+"#
+            ))
+            .expect("negated ordering lowers into rule IR");
+            assert!(matches!(
+                rules[0].conditions.as_slice(),
+                [Condition::Relation {
+                    target: RelationTarget::Match,
+                    relation,
+                    require_all: true,
+                    shared_captures,
+                    ..
+                }] if *relation == expected && shared_captures == &[vec!["VALUE".to_owned()]]
+            ));
+        }
     }
 
     #[test]
