@@ -133,7 +133,7 @@ capture. Badbox lowers declared names to the backend's capture notation before c
 Capture names start with a letter and contain only letters, digits, and underscores.
 
 Capture names are rule-scoped for ordering relations. Repeating a single-node capture name in the
-primary selector and a `follows` or `precedes` selector requires both occurrences to capture exactly
+primary selector and an ordering selector (`follows`, `precedes`, `not follows`, or `not precedes`) requires both occurrences to capture exactly
 the same source text. Different names remain independent. Repeating a primary capture name in a
 `has`, `lacks`, `inside`, or `not inside` selector is rejected because those relations do not correlate captures.
 
@@ -217,7 +217,24 @@ report {
 ```
 
 Severity is `info`, `warning`, or `error`. It labels evidence; a finding does not automatically make
-the Badbox process fail. Version 1 messages are plain strings and do not interpolate captures.
+the Badbox process fail.
+
+Messages can contain placeholders:
+
+```text
+param limit = 4
+...
+message "Callable has {count} clone calls (limit {limit})"
+```
+
+- `{count}` is the finding's observed count.
+- `{name}` is the value of a declared parameter after overrides. The count threshold parameter shows
+  the threshold the check applies.
+- `{{` and `}}` are literal braces.
+
+An unknown placeholder, an unclosed `{`, a lone `}`, and `{count}` in a rule that also declares a
+parameter named `count` are lowering errors. Captures are not interpolated: a finding aggregates
+many matches, so a single captured value would be ambiguous.
 
 ## Relational conditions
 
@@ -255,13 +272,17 @@ The evaluator currently supports these structural combinations:
   selected statement.
 - `where match precedes any|all { ... }` requires qualifying auxiliary statements after the
   selected statement.
+- `where match not follows any|all { ... }` and `where match not precedes any|all { ... }` require
+  the match not to satisfy the corresponding `follows` or `precedes` condition. `not precedes any`
+  means no listed selector has a qualifying statement after the match; `not precedes all` means at
+  least one of them has none. A match outside any statement list satisfies both negations.
 
 Repeated `where` clauses mean all clauses must hold. Badbox collects the primary and auxiliary
 structural matches in one syntax-tree traversal per file, then evaluates the relations from their
 ranges. Identical selectors are collected once and shared by every rule that references them; it
 does not rescan an owner for every primary match.
 
-`follows` and `precedes` require `group by nearest callable`. Primary and auxiliary matches must
+Ordering relations require `group by nearest callable`. Primary and auxiliary matches must
 resolve to statements in the same lexical block and to the same nearest callable. Intervening
 sibling statements are allowed. Nested callables and different branch, loop, switch, or
 error-handling blocks do not satisfy the relation. `any` means at least one listed selector has a
@@ -339,7 +360,8 @@ buffer.
 
 - The crate parses rules and tests; it does not read files or execute tests. Badbox runs them.
 - Badbox executes `find -> where -> group -> count -> threshold -> report`, including text
-  predicates, `match inside`, `match not inside`, `group has/lacks`, and `match follows/precedes`.
+  predicates, `match inside`, `match not inside`, `group has/lacks`, `match follows/precedes`, and
+  `match not follows/not precedes`.
 - Statement ordering executes for every language with a `callable` mapping. Immediate ordering and
   unsupported target/relation combinations are rejected by the scanner.
 - `callable` has semantic mappings for Rust, Go, PowerShell, Zig, TypeScript, TSX, JavaScript,

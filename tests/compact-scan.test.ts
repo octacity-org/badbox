@@ -8,7 +8,7 @@ const rulePack = fileURLToPath(new URL("../examples/rules", import.meta.url));
 test("native scan returns interned tables and fixed-width integer findings", async () => {
   const result = await inspect({ paths: [fixtureRoot], rulePaths: [rulePack], threshold: 1 });
 
-  expect(result.recordWidth).toBe(5);
+  expect(result.recordWidth).toBe(9);
   expect(result.findings).toBeInstanceOf(Uint32Array);
   expect(result.findings.length).toBe(result.findingCount * result.recordWidth);
   expect(result.files).toHaveLength(4);

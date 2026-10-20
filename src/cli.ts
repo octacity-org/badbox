@@ -3,10 +3,16 @@
 import { inspect, testRules } from "./scanner/index.ts";
 import type { RuleTestResult } from "./scanner/index.ts";
 import { reportCheck } from "./reporters/terminal.ts";
+import { formatJson } from "./reporters/json.ts";
+import { checkAgainstRef } from "./baseline.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import { parseArgs } from "node:util";
 
-const usage = "Usage: badbox check [path ...]\n       badbox test\n       badbox create <name.badbox>";
+const usage = "Usage: badbox check [path ...] [--rules <path>]... [--param <rule.name=value>]...\n" +
+  "                    [--max-findings <n>] [--json] [--baseline-ref <ref>]\n" +
+  "       badbox test\n" +
+  "       badbox create <name.badbox>";
 const ruleTemplate = `#badbox 1
 
 # Replace or remove this example rule.
@@ -26,17 +32,41 @@ rule rust/example-excessive-clones for rust {
 
 const [command, ...args] = Bun.argv.slice(2);
 
-if (command === "check" && !args.some((argument) => argument.startsWith("-"))) {
+if (command === "check") {
   try {
-    const result = await inspect({
-      paths: args.length ? args : [process.cwd()],
-      rulePaths: [join(process.cwd(), ".badbox")],
+    const { values, positionals } = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        rules: { type: "string", multiple: true },
+        param: { type: "string", multiple: true },
+        "max-findings": { type: "string" },
+        json: { type: "boolean" },
+        "baseline-ref": { type: "string" },
+      },
     });
-    reportCheck(result);
+    const options = {
+      paths: positionals.length ? positionals : [process.cwd()],
+      rulePaths: values.rules ?? [join(process.cwd(), ".badbox")],
+      parameters: Object.fromEntries((values.param ?? []).map(parameter)),
+      maxFindings: values["max-findings"] === undefined ? undefined : count(values["max-findings"]),
+    };
+    const ref = values["baseline-ref"];
+    const { result, baseline } = ref === undefined
+      ? { result: await inspect(options), baseline: undefined }
+      : await checkAgainstRef(ref, options);
+    if (values.json) {
+      console.log(formatJson(result, baseline));
+    } else {
+      reportCheck(result, baseline);
+    }
     // Findings are observations, not errors. Incomplete checks are errors.
     if (result.diagnostics.length) process.exitCode = 1;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
+    if (error instanceof Error && "code" in error && String(error.code).startsWith("ERR_PARSE_ARGS")) {
+      console.error(usage);
+    }
     process.exitCode = 1;
   }
 } else if (command === "test" && args.length === 0) {
@@ -82,6 +112,26 @@ if (command === "check" && !args.some((argument) => argument.startsWith("-"))) {
 } else {
   console.error(usage);
   process.exitCode = 1;
+}
+
+/**
+ * `rule.name=value`. Digits are an integer, `true`/`false` a boolean, anything else a string;
+ * wrap the value in double quotes to force a string, as in `x/y.pattern="42"`.
+ */
+function parameter(argument: string): [string, string | number | boolean] {
+  const separator = argument.indexOf("=");
+  if (separator <= 0) throw new Error(`--param ${argument}: expected rule.name=value`);
+  const [key, value] = [argument.slice(0, separator), argument.slice(separator + 1)];
+  if (/^"[^]*"$/.test(value)) return [key, value.slice(1, -1)];
+  if (/^\d+$/.test(value)) return [key, count(value)];
+  if (value === "true" || value === "false") return [key, value === "true"];
+  return [key, value];
+}
+
+function count(text: string): number {
+  const value = Number(text);
+  if (!/^\d+$/.test(text) || value > 0xffffffff) throw new Error(`${text} is not an unsigned 32-bit integer`);
+  return value;
 }
 
 function failureReason(result: RuleTestResult): string {

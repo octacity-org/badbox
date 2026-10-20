@@ -3,6 +3,7 @@ mod evaluator;
 mod frontends;
 mod model;
 mod rule_ir;
+mod source_text;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use backend::{StructuralBackend, ast_grep::AstGrepBackend};
@@ -18,7 +19,8 @@ use napi::{
 };
 use napi_derive::napi;
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
-use rule_ir::ParameterValue;
+use rule_ir::{MessagePart, ParameterValue};
+use source_text::{LineIndex, Suppressions};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     fs,
@@ -80,6 +82,7 @@ struct CachedFileScan {
     scanned: bool,
     findings: Vec<CompactFinding>,
     finding_count: usize,
+    suppressed_count: usize,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -89,6 +92,7 @@ impl CachedFileScan {
             scanned: scan.scanned,
             findings: scan.findings.clone(),
             finding_count: scan.finding_count,
+            suppressed_count: scan.suppressed_count,
             diagnostics: scan.diagnostics.clone(),
         }
     }
@@ -112,6 +116,7 @@ impl CachedFileScan {
             scanned: self.scanned,
             findings: self.findings,
             finding_count: self.finding_count,
+            suppressed_count: self.suppressed_count,
             diagnostics: self.diagnostics,
             timings: FileTimings {
                 read,
@@ -239,6 +244,8 @@ struct ResolvedRule {
     rule: Arc<CompiledRule>,
     fingerprint: Fingerprint,
     threshold: u32,
+    /// Message with parameters rendered; `{count}` and `{{`/`}}` escapes remain for each finding.
+    message: String,
 }
 
 struct ExecutionGroup {
@@ -282,6 +289,7 @@ struct FileScan {
     scanned: bool,
     findings: Vec<CompactFinding>,
     finding_count: usize,
+    suppressed_count: usize,
     diagnostics: Vec<Diagnostic>,
     timings: FileTimings,
     selector_executions: usize,
@@ -474,6 +482,26 @@ fn resolve_rules(
             } else {
                 rule.threshold.greater_than()
             };
+            let message = rule
+                .message
+                .iter()
+                .map(|part| match part {
+                    MessagePart::Text(text) => escape_braces(text),
+                    MessagePart::Count => "{count}".to_owned(),
+                    // The count threshold parameter shows the threshold this check applies.
+                    MessagePart::Parameter(name)
+                        if rule.threshold_parameter.as_ref() == Some(name) =>
+                    {
+                        threshold.to_string()
+                    }
+                    MessagePart::Parameter(name) => match parameters.get(name) {
+                        Some(ParameterValue::Integer(value)) => value.to_string(),
+                        Some(ParameterValue::Boolean(value)) => value.to_string(),
+                        Some(ParameterValue::String(value)) => escape_braces(value),
+                        None => unreachable!("lowering rejects undeclared message parameters"),
+                    },
+                })
+                .collect();
             let mut fingerprint = blake3::Hasher::new();
             fingerprint.update(&loaded.fingerprint);
             fingerprint.update(&threshold.to_le_bytes());
@@ -497,9 +525,14 @@ fn resolve_rules(
                 rule: compiled,
                 fingerprint: *fingerprint.finalize().as_bytes(),
                 threshold,
+                message,
             })
         })
         .collect()
+}
+
+fn escape_braces(text: &str) -> String {
+    text.replace('{', "{{").replace('}', "}}")
 }
 
 fn execution_plans(rules: &[ResolvedRule]) -> ExecutionPlans {
@@ -766,12 +799,23 @@ fn scan_file(
     let mut aggregation = Duration::ZERO;
     let mut output_build = Duration::ZERO;
     let mut finding_count = 0;
+    let mut suppressed_count = 0;
     let mut rule_evaluations = 0;
+    let suppressions = Suppressions::parse(&source);
+    let mut lines = None;
+    if !suppressions.is_empty() {
+        lines = Some(LineIndex::new(&source));
+    }
     for (group, matches) in plan.iter().zip(&selection.matches) {
         for planned in &group.rules {
             let rule = AstGrepBackend::rule(&planned.rule);
             let started = Instant::now();
             let remaining = settings.max_findings.saturating_sub(findings.len());
+            let suppressed = |owner_start: usize| {
+                lines
+                    .as_ref()
+                    .is_some_and(|lines| suppressions.covers(lines.line(owner_start), &rule.id))
+            };
             let result = evaluator::evaluate(
                 rule,
                 matches,
@@ -781,9 +825,11 @@ fn scan_file(
                     threshold: planned.threshold,
                     max_findings: remaining,
                     profile: settings.profile,
+                    suppressed: &suppressed,
                 },
             )?;
             finding_count += result.finding_count;
+            suppressed_count += result.suppressed_count;
             findings.extend(result.findings);
             aggregation += result.aggregation;
             output_build += result.output_build;
@@ -793,10 +839,18 @@ fn scan_file(
             rule_evaluations += 1;
         }
     }
+    if !findings.is_empty() {
+        let lines = lines.get_or_insert_with(|| LineIndex::new(&source));
+        for finding in &mut findings {
+            finding.start = lines.position(&source, finding.owner_start as usize);
+            finding.end = lines.position(&source, finding.owner_end as usize);
+        }
+    }
     let mut scan = FileScan {
         scanned: true,
         findings,
         finding_count,
+        suppressed_count,
         timings: FileTimings {
             read,
             parse,
@@ -842,7 +896,7 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
                 language: rule.language,
                 summary: rule.summary.clone(),
                 severity: rule.severity,
-                message: rule.message.clone(),
+                message: resolved.message.clone(),
                 threshold: resolved.threshold,
                 evidence_subject: rule.evidence.subject.clone(),
             }
@@ -891,6 +945,7 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
         rules,
         checked_files: 0,
         finding_count: 0,
+        suppressed_count: 0,
         truncated: false,
         diagnostics: Vec::new(),
         performance: None,
@@ -936,6 +991,7 @@ fn scan(options: ScanOptions) -> Result<ScanOutput> {
             }
             metadata.checked_files += usize::from(file.scanned);
             metadata.finding_count += file.finding_count;
+            metadata.suppressed_count += file.suppressed_count;
             let remaining = (options.max_findings as usize).saturating_sub(findings.len());
             findings.extend(file.findings.drain(..remaining.min(file.findings.len())));
             metadata.diagnostics.extend(file.diagnostics);

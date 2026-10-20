@@ -748,11 +748,58 @@ rule zig/correlated-ordering for zig {
 
     const result = await inspect({ paths: [source], rulePaths: [rules] });
     expect(result.diagnostics).toEqual([]);
-    expect(result.recordWidth).toBe(5);
+    expect(result.recordWidth).toBe(9);
     const owners = await Promise.all(records(result).map(ownerText));
     expect(owners).toEqual([
       "fn sameReceiver() void { stmt.reset(); stmt.clearBindings(); }",
       "fn anotherSameReceiver() void { other.reset(); other.clearBindings(); }",
+    ]);
+  });
+
+  test("negated ordering keeps matches without a later or earlier correlated statement", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "locks.rs");
+    const rules = join(root, "locks.badbox");
+    await Bun.write(source, `
+fn released() { m.lock(); work(); m.unlock(); }
+fn unreleased() { m.lock(); work(); }
+fn wrong_order() { m.unlock(); m.lock(); }
+fn other_receiver() { a.lock(); b.unlock(); }
+fn nested_release() { m.lock(); if ok { m.unlock(); } }
+`);
+    const rule = (id: string, find: string, relation: string, other: string) => `
+rule rust/${id} for rust {
+  summary "${id}"
+  find code(mutex) \`mutex.${find}()\`
+  group by nearest callable
+  where match ${relation} any { code(mutex) \`mutex.${other}()\` }
+  when count > 0
+  report {
+    severity info
+    message "${id}"
+    evidence "${find} calls"
+  }
+}
+`;
+    await Bun.write(rules, `#badbox 1
+${rule("unreleased-lock", "lock", "not precedes", "unlock")}
+${rule("unlock-without-lock", "unlock", "not follows", "lock")}`);
+
+    const result = await inspect({ paths: [source], rulePaths: [rules] });
+    expect(result.diagnostics).toEqual([]);
+    const byRule = async (id: string) => Promise.all(records(result)
+      .filter((finding) => finding.rule.id === id).map(ownerText));
+    // The nested unlock is in another statement list, so it does not order against the lock.
+    expect(await byRule("rust/unreleased-lock")).toEqual([
+      "fn unreleased() { m.lock(); work(); }",
+      "fn wrong_order() { m.unlock(); m.lock(); }",
+      "fn other_receiver() { a.lock(); b.unlock(); }",
+      "fn nested_release() { m.lock(); if ok { m.unlock(); } }",
+    ]);
+    expect(await byRule("rust/unlock-without-lock")).toEqual([
+      "fn wrong_order() { m.unlock(); m.lock(); }",
+      "fn other_receiver() { a.lock(); b.unlock(); }",
+      "fn nested_release() { m.lock(); if ok { m.unlock(); } }",
     ]);
   });
 
@@ -833,6 +880,65 @@ ${body}
   const ownerSummary = async (result: CheckResult) => await Promise.all(records(result).map(async (finding) => [
     finding.rule.id, /(?:fn|void) (\w+)/.exec(await ownerText(finding))?.[1], finding.observed,
   ]));
+
+  test("renders count and parameter placeholders in finding messages", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "input.rs");
+    const rules = join(root, "messages.badbox");
+    await Bun.write(source, "fn f() { a.clone(); b.clone(); c.clone(); }");
+    await Bun.write(rules, `#badbox 1
+rule rust/clones for rust {
+  summary "clones"
+  param limit = 1
+  param noun = "clone"
+  find code(value) \`value.clone()\`
+  group by nearest callable
+  when count > limit
+  report {
+    severity info
+    message "{count} {noun} calls (limit {limit}) {{literal}}"
+    evidence "clone calls"
+  }
+}
+`);
+
+    const result = await inspect({
+      paths: [source], rulePaths: [rules], parameters: { "rust/clones.limit": 2, "rust/clones.noun": "{x}" },
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.rules[0]!.message).toBe("{count} {{x}} calls (limit 2) {{literal}}");
+    expect(records(result).map((finding) => finding.message)).toEqual(["3 {x} calls (limit 2) {literal}"]);
+  });
+
+  test("reports 1-based line and code-point column positions next to byte offsets", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "input.rs");
+    await Bun.write(source, "// é\n  fn ünicode() {\n    a.clone(); b.clone();\n  }\n");
+    const result = await inspect({ paths: [source], rulePaths: [rustRulePath], threshold: 1 });
+    expect(result.diagnostics).toEqual([]);
+    const [finding] = records(result);
+    expect(finding).toMatchObject({ startLine: 2, startColumn: 3, endLine: 4, endColumn: 4 });
+    expect(await ownerText(finding!)).toStartWith("fn ünicode()");
+  });
+
+  test("badbox-ignore comments suppress only the listed rule on the next line's owner", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "input.rs");
+    await Bun.write(source, `// badbox-ignore rust/excessive-clones
+fn ignored() { a.clone(); b.clone(); }
+// badbox-ignore rust/other-rule
+fn other_rule() { a.clone(); b.clone(); }
+// badbox-ignore rust/excessive-clones
+
+fn not_adjacent() { a.clone(); b.clone(); }
+`);
+    const result = await inspect({ paths: [source], rulePaths: [rustRulePath], threshold: 1 });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.suppressedCount).toBe(1);
+    expect(result.findingCount).toBe(2);
+    expect((await Promise.all(records(result).map(ownerText))).map((owner) => owner.split("(")[0]))
+      .toEqual(["fn other_rule", "fn not_adjacent"]);
+  });
 
   test("match not inside keeps only matches outside the listed nodes", async () => {
     const root = await temporaryRoot();

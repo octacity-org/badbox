@@ -9,7 +9,7 @@ pub struct Rule {
     pub language: Language,
     pub summary: String,
     pub severity: Severity,
-    pub message: String,
+    pub message: Vec<MessagePart>,
     pub parameters: BTreeMap<String, ParameterValue>,
     pub threshold_parameter: Option<String>,
     pub selection: StructuralSelection,
@@ -18,6 +18,14 @@ pub struct Rule {
     pub aggregation: Aggregation,
     pub threshold: Threshold,
     pub evidence: Evidence,
+}
+
+/// A report message piece. Parameters render at rule resolution; the count renders per finding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessagePart {
+    Text(String),
+    Count,
+    Parameter(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +92,18 @@ pub enum Relation {
     NotInside,
     Follows,
     Precedes,
+    NotFollows,
+    NotPrecedes,
+}
+
+impl Relation {
+    /// Statement-order relations, which need nearest-callable grouping and sequence contexts.
+    pub fn is_ordering(self) -> bool {
+        matches!(
+            self,
+            Self::Follows | Self::Precedes | Self::NotFollows | Self::NotPrecedes
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
