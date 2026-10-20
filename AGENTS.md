@@ -18,6 +18,7 @@ rewriting or LLM reasoning to the native engine.
 ## User Contract
 
 - The CLI is `badbox check`, not `scan`.
+- `badbox -v` and `badbox --version` print the root `package.json` version.
 - Project rules live under `.badbox/`. No policies or example rules run by default.
 - `badbox create <name.badbox>` creates `.badbox/<name.badbox>` with the current `#badbox 1`
   header and an editable example. It must not overwrite an existing file.

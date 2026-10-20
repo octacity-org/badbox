@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import packageManifest from "../package.json" with { type: "json" };
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -257,4 +258,15 @@ test("check --baseline-ref reports only findings the ref does not have", async (
   const missing = await runCli(project, "check", "--baseline-ref", "no-such-ref");
   expect(missing.code).toBe(1);
   expect(missing.stderr).toContain("baseline ref no-such-ref is not a commit");
+});
+
+test("-v and --version print the package version", async () => {
+  const project = await projectWithRules();
+  for (const flag of ["-v", "--version"]) {
+    const result = await runCli(project, flag);
+    expect(result).toEqual({ stdout: `${packageManifest.version}\n`, stderr: "", code: 0 });
+  }
+  const extra = await runCli(project, "--version", "check");
+  expect(extra.code).toBe(1);
+  expect(extra.stderr).toContain("badbox -v | --version");
 });
