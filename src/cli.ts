@@ -8,11 +8,13 @@ import { checkAgainstRef } from "./baseline.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
+import packageManifest from "../package.json" with { type: "json" };
 
 const usage = "Usage: badbox check [path ...] [--rules <path>]... [--param <rule.name=value>]...\n" +
   "                    [--max-findings <n>] [--json] [--baseline-ref <ref>]\n" +
   "       badbox test\n" +
-  "       badbox create <name.badbox>";
+  "       badbox create <name.badbox>\n" +
+  "       badbox -v | --version";
 const ruleTemplate = `#badbox 1
 
 # Replace or remove this example rule.
@@ -32,7 +34,9 @@ rule rust/example-excessive-clones for rust {
 
 const [command, ...args] = Bun.argv.slice(2);
 
-if (command === "check") {
+if ((command === "-v" || command === "--version") && args.length === 0) {
+  console.log(packageManifest.version);
+} else if (command === "check") {
   try {
     const { values, positionals } = parseArgs({
       args,

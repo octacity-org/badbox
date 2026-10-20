@@ -241,7 +241,10 @@ badbox create <name.badbox>
 badbox check [path ...] [--rules <path>]... [--param <rule.name=value>]...
              [--max-findings <n>] [--json] [--baseline-ref <ref>]
 badbox test
+badbox -v | --version
 ```
+
+`-v` and `--version` print the installed package version.
 
 ### `create`
 
