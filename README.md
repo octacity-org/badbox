@@ -9,7 +9,7 @@ while leaving the decision to a developer or coding agent.
 Badbox ships no default policies and performs no automatic rewriting. Each project owns its rules
 under `.badbox/`.
 
-Current npm version: `0.3.0`
+Current npm version: `0.4.0`
 
 Current rule format: `#badbox 1` (experimental)
 
@@ -448,7 +448,9 @@ See the [benchmark methodology](benchmarks/README.md),
 
 | Path | Purpose |
 | --- | --- |
-| `src/cli.ts` | `check`, `test`, and `create` commands |
+| `src/cli.ts` | `check`, `test`, `create`, and `--version` commands |
+| `src/reporters/` | Terminal and `--json` output |
+| `src/baseline.ts` | `check --baseline-ref` git worktree comparison |
 | `src/scanner/` | Public TypeScript API and native-addon loading |
 | `native/src/rule_ir.rs` | Backend-independent rule model |
 | `native/src/frontends/` | DSL lowering and validation |
@@ -465,7 +467,7 @@ All six npm packages and both Rust manifests must use the same release version. 
 invariant before publishing:
 
 ```bash
-bun run scripts/validate-release.ts 0.3.0
+bun run scripts/validate-release.ts 0.4.0
 bun run ci
 ```
 
