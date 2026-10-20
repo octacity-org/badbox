@@ -102,6 +102,7 @@ jobs:
           cp node_modules/badbox/examples/rules/rust/excessive-clones.badbox .badbox/
           bun -e 'await Bun.write("sample.rs", "fn example() { let a = value.clone(); let b = value.clone(); }")'
           bun node_modules/badbox/src/cli.ts check sample.rs
+          test "$(bun node_modules/badbox/src/cli.ts --version)" = "$RELEASE_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: npm-packages
